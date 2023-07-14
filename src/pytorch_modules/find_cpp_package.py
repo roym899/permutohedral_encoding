@@ -4,12 +4,33 @@ import warnings
 
 import torch
 
-ALL_COMPUTE_CAPABILITIES = [20, 21, 30, 35, 37, 50, 52, 53, 60, 61, 62, 70, 72, 75, 80, 86, 89, 90]
+ALL_COMPUTE_CAPABILITIES = [
+    20,
+    21,
+    30,
+    35,
+    37,
+    50,
+    52,
+    53,
+    60,
+    61,
+    62,
+    70,
+    72,
+    75,
+    80,
+    86,
+    89,
+    90,
+]
+
 
 def find_package():
-
     if not torch.cuda.is_available():
-        raise EnvironmentError("Unknown compute capability. Ensure PyTorch with CUDA support is installed.")
+        raise EnvironmentError(
+            "Unknown compute capability. Ensure PyTorch with CUDA support is installed."
+        )
 
     def _get_device_compute_capability(idx):
         major, minor = torch.cuda.get_device_capability(idx)
@@ -17,7 +38,9 @@ def find_package():
 
     def _get_system_compute_capability():
         num_devices = torch.cuda.device_count()
-        device_capability = [_get_device_compute_capability(i) for i in range(num_devices)]
+        device_capability = [
+            _get_device_compute_capability(i) for i in range(num_devices)
+        ]
         system_capability = min(device_capability)
 
         if not all(cc == system_capability for cc in device_capability):
@@ -43,17 +66,19 @@ def find_package():
         try:
             _C = importlib.import_module(f"permutohedral_encoding_bindings._{cc}_C")
             if cc != system_compute_capability:
-                warnings.warn(f"tinycudann was built for lower compute capability ({cc}) than the system's ({system_compute_capability}). Performance may be suboptimal.")
+                warnings.warn(
+                    f"tinycudann was built for lower compute capability ({cc}) than the system's ({system_compute_capability}). Performance may be suboptimal."
+                )
             break
         except ModuleNotFoundError:
             pass
 
     if _C is None:
-        raise EnvironmentError(f"Could not find compatible tinycudann extension for compute capability {system_compute_capability}.")
+        raise EnvironmentError(
+            f"Could not find compatible tinycudann extension for compute capability {system_compute_capability}."
+        )
 
     return _C
-
-
 
 
 # if not torch.cuda.is_available():
