@@ -2,11 +2,9 @@ import math
 
 import torch
 
-from permutohedral_encoding.find_cpp_package import *
-from permutohedral_encoding.funcs import *
-from permutohedral_encoding.utils import cosine_easing_window
+from permutohedral_encoding import find_cpp_package, funcs, utils
 
-_C = find_package()
+_C = find_cpp_package.find_package()
 
 
 class PermutoEncoding(torch.nn.Module):
@@ -38,7 +36,8 @@ class PermutoEncoding(torch.nn.Module):
         ).contiguous()  # makes it nr_levels x capacity x nr_feat
         self.lattice_values = torch.nn.Parameter(lattice_values.cuda())
 
-        # each levels of the hashamp can be randomly shifted so that we minimize collisions
+        # each levels of the hashamp can be randomly shifted so that we minimize
+        #  collisions
         if appply_random_shift_per_level:
             random_shift_per_level = torch.randn(nr_levels, pos_dim) * 10
             self.random_shift_per_level = torch.nn.Parameter(
@@ -97,7 +96,7 @@ class PermutoEncoding(torch.nn.Module):
         )
         require_positions_grad = positions.requires_grad and torch.is_grad_enabled()
 
-        sliced_values = PermutoEncodingFunc.apply(
+        sliced_values = funcs.PermutoEncodingFunc.apply(
             self.lattice,
             self.lattice_values,
             positions,
@@ -115,7 +114,8 @@ class PermutoEncoding(torch.nn.Module):
         return sliced_values
 
     def output_dims(self):
-        # if we concat also the points, we add a series of extra resolutions to contain those points
+        # if we concat also the points, we add a series of extra resolutions to contain
+        #  those points
         nr_resolutions_extra = 0
         if self.concat_points:
             nr_resolutions_extra = math.ceil(
@@ -127,7 +127,8 @@ class PermutoEncoding(torch.nn.Module):
         return out_dims
 
 
-# coarse2fine  which slowly anneals the weights of a vector of size nr_values. t is between 0 and 1
+# coarse2fine  which slowly anneals the weights of a vector of size nr_values. t is
+#  between 0 and 1
 class Coarse2Fine(torch.nn.Module):
     def __init__(self, nr_values):
         super(Coarse2Fine, self).__init__()
@@ -139,7 +140,7 @@ class Coarse2Fine(torch.nn.Module):
         alpha = (
             t * self.nr_values
         )  # becasue cosine_easing_window except the alpha to be in range 0, nr_values
-        window = cosine_easing_window(self.nr_values, alpha)
+        window = utils.cosine_easing_window(self.nr_values, alpha)
 
         self.last_t = t
         assert t <= 1.0, "t cannot be larger than 1.0"

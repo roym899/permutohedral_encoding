@@ -1,8 +1,8 @@
 import torch
 
-from permutohedral_encoding.find_cpp_package import *
+from permutohedral_encoding import find_cpp_package
 
-_C = find_package()
+_C = find_cpp_package.find_package()
 
 
 class PermutoEncodingFunc(torch.autograd.Function):
@@ -45,7 +45,9 @@ class PermutoEncodingFunc(torch.autograd.Function):
             or input_struct.m_require_positions_grad
         ), "We cannot perform the backward function on the slicing because we did not precompute the required tensors in the forward pass. To enable this, set the model.train(), set torch.set_grad_enabled(True) and make lattice_values have required_grad=True"
 
-        # we pass the tensors of lattice_values and positiosn explicitly and not throught the input struct so that we can compute gradients from them for the double backward pass
+        # NOTE we pass the tensors of lattice_values and positiosn explicitly and not
+        #  throught the input struct so that we can compute gradients from them for the
+        #  double backward pass
         return PermutoEncodingFuncBack.apply(
             lattice,
             input_struct,
@@ -56,7 +58,8 @@ class PermutoEncodingFunc(torch.autograd.Function):
         )
 
 
-# in order to enable a double backward like in https://pytorch.org/tutorials/intermediate/custom_function_double_backward_tutorial.html
+# NOTE in order to enable a double backward like in
+#  https://pytorch.org/tutorials/intermediate/custom_function_double_backward_tutorial.html
 class PermutoEncodingFuncBack(torch.autograd.Function):
     @staticmethod
     def forward(
@@ -97,10 +100,13 @@ class PermutoEncodingFuncBack(torch.autograd.Function):
         dummy6,
         dummy7,
     ):
-        # in the forward pass of this module we do
-        # lattice_values_grad, positions_grad = slice_back(lattice_values_monolithic, grad_sliced_values_monolithic, positions)
-        # now in the backward pass we have the upstream gradient which is double_lattice_values_grad, double_positions_grad
-        # we want to propagate the double_positions_grad into lattice_values_monolithic and grad_sliced_values_monolithic
+        # NOTE in the forward pass of this module we do
+        #  lattice_values_grad, positions_grad = slice_back(
+        #     lattice_values_monolithic, grad_sliced_values_monolithic, positions)
+        #  now in the backward pass we have the upstream gradient which is
+        #  double_lattice_values_grad, double_positions_grad
+        #  we want to propagate the double_positions_grad into lattice_values_monolithic
+        #  and grad_sliced_values_monolithic
 
         (grad_sliced_values_monolithic,) = ctx.saved_tensors
         lattice = ctx.lattice
