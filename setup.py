@@ -1,26 +1,25 @@
+"""Build and install permutohedral_encoding package."""
 import os
-
 import re
-from setuptools import setup
-from pkg_resources import parse_version
 import subprocess
-import sys
+
 import torch
+from pkg_resources import parse_version
+from setuptools import setup
 from torch.utils.cpp_extension import BuildExtension, CUDAExtension
 
 SCRIPT_DIR = os.path.dirname(os.path.realpath(__file__))
-# ROOT_DIR = os.path.dirname(os.path.dirname(SCRIPT_DIR))
 ROOT_DIR = SCRIPT_DIR
 
 
-def min_supported_compute_capability(cuda_version):
+def min_supported_compute_capability(cuda_version) -> int:
     if cuda_version >= parse_version("12.0"):
         return 50
     else:
         return 20
 
 
-def max_supported_compute_capability(cuda_version):
+def max_supported_compute_capability(cuda_version) -> int:
     if cuda_version < parse_version("11.0"):
         return 75
     elif cuda_version < parse_version("11.1"):
@@ -31,12 +30,6 @@ def max_supported_compute_capability(cuda_version):
         return 90
 
 
-# Find version of permutohedral_encoding by scraping CMakeLists.txt
-# with open(os.path.join(ROOT_DIR, "CMakeLists.txt"), "r") as cmakelists:
-# 	for line in cmakelists.readlines():
-# 		if line.strip().startswith("VERSION"):
-# 			VERSION = line.split("VERSION")[-1].strip()
-# 			break
 VERSION = 1.0
 
 print(f"Building PyTorch extension for permutohedral_encoding version {VERSION}")
@@ -113,7 +106,9 @@ if os.system("nvcc --version") == 0:
 
         if supported_compute_capabilities != compute_capabilities:
             print(
-                f"WARNING: Compute capabilities {compute_capabilities} are not all supported by the installed CUDA version {cuda_version}. Targeting {supported_compute_capabilities} instead."
+                f"WARNING: Compute capabilities {compute_capabilities} are not "
+                f"all supported by the installed CUDA version {cuda_version}. "
+                f"Targeting {supported_compute_capabilities} instead."
             )
             compute_capabilities = supported_compute_capabilities
 
@@ -124,6 +119,7 @@ base_nvcc_flags = [
     "--generate-line-info",
     "--extended-lambda",
     "--expt-relaxed-constexpr",
+    # TODO why the below?
     # The following definitions must be undefined
     # since permutohedral_encoding requires half-precision operation.
     "-U__CUDA_NO_HALF_OPERATORS__",
@@ -141,21 +137,21 @@ elif os.name == "nt":
     base_cflags = ["/std:c++14"]
 
 
-# Some containers set this to contain old architectures that won't compile. We only need the one installed in the machine.
+# Some containers set this to contain old architectures that won't compile.
+#  We only need the one installed in the machine.
 os.environ["TORCH_CUDA_ARCH_LIST"] = ""
 
 # List of sources.
 bindings_dir = os.path.dirname(__file__)
-# root_dir = os.path.abspath(os.path.join(bindings_dir, "../.."))
 root_dir = os.path.abspath(bindings_dir)
 base_definitions = []
 base_source_files = [
-    "./src/Encoding.cu",
-    "./src/PyBridge.cxx",
+    "./permutohedral_encoding/csrc/Encoding.cu",
+    "./permutohedral_encoding/csrc/PyBridge.cpp",
 ]
 
 
-def make_extension(compute_capability):
+def make_extension(compute_capability: int) -> CUDAExtension:
     nvcc_flags = base_nvcc_flags + [
         f"-gencode=arch=compute_{compute_capability},code={code}_{compute_capability}"
         for code in ["compute", "sm"]
@@ -168,25 +164,17 @@ def make_extension(compute_capability):
     cflags = base_cflags + definitions
 
     ext = CUDAExtension(
-        # name=f"permutohedral_encoding._{compute_capability}_C",
         name=f"permutohedral_encoding_bindings._{compute_capability}_C",
-        # name=f"permutohedral_encoding",
         sources=source_files,
-        include_dirs=[
-            "%s/include" % root_dir,
-            "%s/kernels" % root_dir,
-            "%s/deps" % root_dir,
-        ],
+        include_dirs=["%s/csrc" % root_dir],
         extra_compile_args={"cxx": cflags, "nvcc": nvcc_flags},
         libraries=["cuda", "cudadevrt", "cudart_static"],
     )
     return ext
 
 
-# ext_modules = [make_extension(comp) for comp in compute_capabilities]
 print("Building for compute capability: ", min_compute_capability)
 ext_modules = [make_extension(min_compute_capability)]
-# print("-------------------ext_modules",ext_modules)
 
 setup(
     name="permutohedral_encoding",
@@ -196,7 +184,7 @@ setup(
     classifiers=[
         "Development Status :: 4 - Beta",
         "Environment :: GPU :: NVIDIA CUDA",
-        "License :: BSD 3-Clause",
+        "License :: MIT License",
         "Programming Language :: C++",
         "Programming Language :: CUDA",
         "Programming Language :: Python :: 3 :: Only",
@@ -210,13 +198,9 @@ setup(
     author_email="rosu@ais.uni-bonn.de",
     maintainer="Radu Alexandru Rosu",
     maintainer_email="rosu@ais.uni-bonn.de",
-    download_url=f"https://github.com/RaduAlexandru/permutohedral_encoding",
-    license='BSD 3-Clause "New" or "Revised" License',
-    packages=["permutohedral_encoding"],
-    package_dir={"permutohedral_encoding": "src"},
-    package_data={"permutohedral_encoding": ["pytorch_modules/*"]},
-    install_requires=[],
-    # include_package_data=True,
+    download_url="https://github.com/RaduAlexandru/permutohedral_encoding",
+    package=["permutohedral_encoding"],
+    install_requires=["torch"],
     zip_safe=False,
     ext_modules=ext_modules,
     cmdclass={"build_ext": BuildExtension},

@@ -2,9 +2,9 @@ import math
 
 import torch
 
-from permutohedral_encoding.pytorch_modules.find_cpp_package import *
-from permutohedral_encoding.pytorch_modules.funcs import *
-from permutohedral_encoding.pytorch_modules.utils import cosine_easing_window
+from permutohedral_encoding.find_cpp_package import *
+from permutohedral_encoding.funcs import *
+from permutohedral_encoding.utils import cosine_easing_window
 
 _C = find_package()
 

@@ -1,6 +1,6 @@
 import torch
 
-from permutohedral_encoding.pytorch_modules.find_cpp_package import *
+from permutohedral_encoding.find_cpp_package import *
 
 _C = find_package()
 

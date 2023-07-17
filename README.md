@@ -1,5 +1,4 @@
 # Permutohedral Encoding 
-
 This contains a modified implementation of the permutohedral encoding which was originally proposed in [PermutoSDF: Fast Multi-View Reconstruction with Implicit Surfaces using Permutohedral Lattices](https://radualexandru.github.io/permuto_sdf/). This implementation adds support for both torch.vmap and datatypes other than float.
 
 Permutohedral encoding is used to obtain high-dimensional features from low-dimensional space. The features can then be used by a small MLP for decoding density, SDF, RGB or whatever quantity is needed. The encoding works by interpolating features from a multi-resolution permutohedral hash-map.
@@ -11,7 +10,6 @@ The permutohedral encoding is similar in spirit to the hash-map encoding of [Ins
 </p>
 
 # Usage
-
 The permutohedral encoding can be used directly in PyTorch:
 
 ```py
@@ -42,29 +40,18 @@ features=encoding(points)
 
 A more complete example on how to use the permutohedral encoding is shown in `./examples/train_toy_example.py`
 
-<!--
-### Example 
-
-SDF 
--->
-
 
 # Install
-
 One can easily install it as a python package by using
 
 ```sh
-$ git clone --recursive https://github.com/RaduAlexandru/permutohedral_encoding
-$ cd permutohedral_encoding
-$ make #this runs python install for the current user
+pip install https://github.com/roym899/permutohedral_encoding
 ```
 
 This requires that PyTorch and CUDA are installed. 
 
 
 # Performance
-
-
 The permutohedral lattice scales linearly wrt. input dimensionality in contrast to exponentially in the case of cubical voxels. This make it particularly attractive for problems dealing with 3D or 4D data. Higher dimensions are also readily supported. 
 <p align="middle">
   <img src="imgs/perf.png" width="550" />
@@ -74,8 +61,17 @@ The script `./examples/performance.py` compares the throughput between permutohe
 To be noted that currently we only support floating point precision so for a fair comparison [tiny-cudan-nn] is compiled without the half-float operations by disabling [here](https://github.com/NVlabs/tiny-cuda-nn/blob/a77dc53ed770dd8ea6f78951d5febe175d0045e9/include/tiny-cuda-nn/common.h#L54) Additionally, [tiny-cudan-nn] supports by default up to dimension 4. This can be increased by uncommenting the corresponding lines [here](https://github.com/NVlabs/tiny-cuda-nn/blob/a77dc53ed770dd8ea6f78951d5febe175d0045e9/include/tiny-cuda-nn/encodings/grid.h#L1448)
 
 
-## Citation
+# Development
+- Use `pip install -r requirements-dev.txt` to install dev tools
 
+#### Generating compile_commands.json
+If you want to get correct code checking with ccls / etc. you can do so by going to the ninja build directory (normally `./build/temp.../`), running
+```
+ninja -t compdb > compile_commands.json
+```
+and moving `compile_commands.json` to the projects root directory.
+
+## Citation
 ```
 @inproceedings{rosu2023permutosdf,
     title={PermutoSDF: Fast Multi-View Reconstruction with 
@@ -86,19 +82,10 @@ To be noted that currently we only support floating point precision so for a fai
 }
 ```
 
-   [EasyPBR]: <https://github.com/RaduAlexandru/easy_pbr>
-   [DataLoaders]: <https://github.com/RaduAlexandru/data_loaders>
-   [InstantNGP]: <https://github.com/NVlabs/instant-ngp>
-   [tiny-cudan-nn]: <https://github.com/NVlabs/tiny-cuda-nn> 
-
-
-
-
-
-
-
-
-
+[EasyPBR]: <https://github.com/RaduAlexandru/easy_pbr>
+[DataLoaders]: <https://github.com/RaduAlexandru/data_loaders>
+[InstantNGP]: <https://github.com/NVlabs/instant-ngp>
+[tiny-cudan-nn]: <https://github.com/NVlabs/tiny-cuda-nn> 
 
 # License
-Permutohedral Encoding is provided under the terms of the MIT license (see LICENSE).
+This fork and the original code base are provided under the terms of the MIT license (see LICENSE).
