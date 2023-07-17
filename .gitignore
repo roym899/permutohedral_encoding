@@ -1,4 +1,5 @@
 .python-version
+compile_commands.json
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
