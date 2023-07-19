@@ -30,48 +30,48 @@ struct EncodingInput {
 };
 
 // fixed params that do not change during the lifetime of the lattice
-// TODO maybe this should take a dtype as input instead of being a template?
-template <typename scalar_t>
 struct EncodingFixedParams {
   EncodingFixedParams(const int pos_dim, const int capacity,
                       const int nr_levels, const int nr_feat_per_level,
-                      const std::vector<scalar_t>& sigmas_list,
+                      const std::vector<float>& sigmas_list,
                       const torch::Tensor& random_shift_per_level,
-                      const bool concat_points, const scalar_t points_scaling)
+                      const bool concat_points, const float points_scaling)
       : m_pos_dim(pos_dim),
         m_capacity(capacity),
         m_nr_levels(nr_levels),
         m_nr_feat_per_level(nr_feat_per_level),
         m_sigmas_list(sigmas_list),
-        m_scale_factor(compute_scale_factor_tensor(sigmas_list, pos_dim)),
-        m_random_shift_per_level(random_shift_per_level),
         m_concat_points(concat_points),
-        m_points_scaling(points_scaling){
+        m_points_scaling(points_scaling),
+        m_random_shift_per_level(random_shift_per_level),
+        m_scale_factor(compute_scale_factor_tensor(sigmas_list, pos_dim)){
 
         };
+
   const int m_pos_dim;
   const int m_capacity;
   const int m_nr_levels;
   const int m_nr_feat_per_level;
-  std::vector<scalar_t> m_sigmas_list;
-  torch::Tensor m_scale_factor;
-  torch::Tensor m_random_shift_per_level;
+  std::vector<float> m_sigmas_list;
   bool m_concat_points;
-  scalar_t m_points_scaling;
+  float m_points_scaling;
+  torch::Tensor m_random_shift_per_level;
+  torch::Tensor m_scale_factor;
 
   torch::Tensor compute_scale_factor_tensor(
-      const std::vector<scalar_t> sigmas_list, const int pos_dim) {
+      const std::vector<float> sigmas_list, const int pos_dim) {
     int nr_resolutions = sigmas_list.size();
 
     torch::Tensor scale_factor_tensor =
         torch::zeros({nr_resolutions, pos_dim},
-                     torch::dtype(torch::CppTypeToScalarType<scalar_t>())
+                     torch::dtype(m_random_shift_per_level.scalar_type())
                          .device(torch::kCUDA, 0));
-    scalar_t invStdDev = 1.0;
+
+    float invStdDev = 1.0;
     for (int res_idx = 0; res_idx < nr_resolutions; res_idx++) {
       for (int i = 0; i < pos_dim; i++) {
         scale_factor_tensor[res_idx][i] =
-            1.0 / (std::sqrt((scalar_t)(i + 1) * (i + 2))) * invStdDev;
+            1.0 / (std::sqrt((float)(i + 1) * (i + 2))) * invStdDev;
         scale_factor_tensor[res_idx][i] =
             scale_factor_tensor[res_idx][i] / sigmas_list[res_idx];
       }
@@ -107,7 +107,7 @@ class Encoding : public EncodingBase,
     return std::shared_ptr<Encoding>(new Encoding(std::forward<Args>(args)...));
   }
   ~Encoding();
-  Encoding(const EncodingFixedParams<float>& fixed_params);
+  Encoding(const EncodingFixedParams& fixed_params);
 
   // void test(const torch::Tensor& tensor);
 
@@ -130,7 +130,7 @@ class Encoding : public EncodingBase,
   void check_positions_and_values(const torch::Tensor& positions_raw,
                                   const torch::Tensor& values);
 
-  EncodingFixedParams<float> m_fixed_params;
+  EncodingFixedParams m_fixed_params;
 };
 
 // NOTE: more specializations can be added by uncommenting the corresponding
@@ -139,7 +139,7 @@ class Encoding : public EncodingBase,
 template <uint32_t POS_DIM>
 inline std::shared_ptr<EncodingBase> create_encoding_template_pos_dim(
     const int pos_dim, const int nr_feat_per_level,
-    const EncodingFixedParams<float>& fixed_params) {
+    const EncodingFixedParams& fixed_params) {
   switch (nr_feat_per_level) {
     case (2):
       return std::make_shared<Encoding<POS_DIM, 2>>(fixed_params);
@@ -155,7 +155,7 @@ inline std::shared_ptr<EncodingBase> create_encoding_template_pos_dim(
 // encoding object that has a compile time known pos dim and nr_feat_per_level
 inline std::shared_ptr<EncodingBase> create_encoding(
     const int pos_dim, const int nr_feat_per_level,
-    const EncodingFixedParams<float>& fixed_params) {
+    const EncodingFixedParams& fixed_params) {
   switch (pos_dim) {
     // case(2): return create_encoding_template_pos_dim<2>(pos_dim,
     // nr_feat_per_level);
@@ -211,7 +211,7 @@ class EncodingWrapper : public std::enable_shared_from_this<EncodingWrapper> {
 
  private:
   EncodingWrapper(const int pos_dim, const int nr_feat_per_level,
-                  const EncodingFixedParams<float>& fixed_params) {
+                  const EncodingFixedParams& fixed_params) {
     m_encoding = create_encoding(pos_dim, nr_feat_per_level, fixed_params);
   }
   std::shared_ptr<EncodingBase> m_encoding;

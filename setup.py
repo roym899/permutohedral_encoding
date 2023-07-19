@@ -119,12 +119,14 @@ base_nvcc_flags = [
     "--generate-line-info",
     "--extended-lambda",
     "--expt-relaxed-constexpr",
-    # TODO why the below?
+    # NOTE pytorch disables CUDA's half precisoin by default since they ship their own
+    #  https://discuss.pytorch.org/t/cuda-no-half2-operators-for-cuda-9-2/18365/4
+    # TODO it seems to compile fine with keeping these definitions?
     # The following definitions must be undefined
     # since permutohedral_encoding requires half-precision operation.
-    "-U__CUDA_NO_HALF_OPERATORS__",
-    "-U__CUDA_NO_HALF_CONVERSIONS__",
-    "-U__CUDA_NO_HALF2_OPERATORS__",
+    # "-U__CUDA_NO_HALF_OPERATORS__",
+    # "-U__CUDA_NO_HALF_CONVERSIONS__",
+    # "-U__CUDA_NO_HALF2_OPERATORS__",
 ]
 
 if os.name == "posix":

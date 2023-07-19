@@ -19,7 +19,7 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
       .def_readwrite("m_require_positions_grad",
                      &EncodingInput::m_require_positions_grad);
 
-  py::class_<EncodingFixedParams<float>>(m, "EncodingFixedParams")
+  py::class_<EncodingFixedParams>(m, "EncodingFixedParams")
       .def(py::init<const int, const int, const int, const int,
                     const std::vector<float>&, const torch::Tensor&, const bool,
                     const float>());
@@ -30,7 +30,7 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
           "create",
           &EncodingWrapper::create<
               const int, const int,
-              const EncodingFixedParams<float>&>)  // for templated methods like
+              const EncodingFixedParams&>)  // for templated methods like
                                                    // this one we need to
                                                    // explicitly instantiate one
                                                    // of the arguments
