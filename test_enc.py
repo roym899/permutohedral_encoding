@@ -57,6 +57,25 @@ num_points = 3000000
 points_f16 = torch.rand(num_points, 2, dtype=torch.float16).to("cuda")
 points_f32 = torch.rand(num_points, 2, dtype=torch.float32).to("cuda")
 points_f64 = torch.rand(num_points, 2, dtype=torch.float64).to("cuda")
+a16 = torch.rand(3000, 3000, device="cuda", dtype=torch.float16)
+a32 = torch.rand(3000, 3000, device="cuda", dtype=torch.float32)
+a64 = torch.rand(3000, 3000, device="cuda", dtype=torch.float64)
+
+
+def aa16():
+    res = a16 @ a16
+
+
+def aa32():
+    res = a32 @ a32
+
+
+def aa64():
+    res = a64 @ a64
+
+
+def f64():
+    encoding_f64(points_f64)
 
 
 def f16():
@@ -78,3 +97,7 @@ f64(), print("f64 works")
 benchmark(f16, "f16 forward", 10)
 benchmark(f32, "f32 forward", 10)
 benchmark(f64, "f64 forward", 10)
+
+benchmark(aa16, "aa16 forward", 10)
+benchmark(aa32, "aa32 forward", 10)
+benchmark(aa64, "aa64 forward", 10)
