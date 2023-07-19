@@ -30,9 +30,10 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
           "create",
           &EncodingWrapper::create<
               const int, const int,
-              const EncodingFixedParams<float>&>)  // for templated methods like this
-                                            // one we need to explicitly
-                                            // instantiate one of the arguments
+              const EncodingFixedParams<float>&>)  // for templated methods like
+                                                   // this one we need to
+                                                   // explicitly instantiate one
+                                                   // of the arguments
       .def("forward", &EncodingWrapper::forward)
       .def("backward", &EncodingWrapper::backward)
       .def("double_backward_from_positions",

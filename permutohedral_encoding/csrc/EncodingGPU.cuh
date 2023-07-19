@@ -6,13 +6,6 @@
 #define BLOCK_SIZE_BACK 128
 #define BLOCK_SIZE_DOUBLE_BACK 128
 
-// #define LATTICE_HALF_PRECISION 0
-
-// cannot really use this the way I intended because it seems to shared between
-// different encodings, so different objects of the same class
-// __constant__ float random_shift_constant[256];
-// __constant__ float scale_factor_constant[256];
-
 template <int pos_dim>
 /* Hash function used in this implementation. A simple base conversion. */
 __forceinline__ __device__ unsigned int hash(const int* const key) {
@@ -36,26 +29,6 @@ __forceinline__ __device__ int idx_hash_with_collision(const int* const key,
   int h = modHash(hash<pos_dim>(key), capacity);
   return h;
 }
-
-// //page 86/146 from https://core.ac.uk/download/pdf/85209106.pdf
-// __device__ float barycentric_to_c2_continous(const float x) {
-
-//     float y= 6*powf(x,5) - 15*powf(x,4) +10*powf(x,3);
-
-//     return y;
-// }
-// __device__ float barycentric_to_c1_continous(const float x) {
-
-//     float y= 3*powf(x,2) - 2*powf(x,3);
-
-//     return y;
-// }
-// __device__ float barycentric_to_c1_continous_back(const float x) {
-
-//     float y= 6*x - 6*powf(x,2);
-
-//     return y;
-// }
 
 template <int pos_dim, int val_dim>
 __global__ void __launch_bounds__(

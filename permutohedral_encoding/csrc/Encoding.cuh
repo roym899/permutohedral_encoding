@@ -30,13 +30,14 @@ struct EncodingInput {
 };
 
 // fixed params that do not change during the lifetime of the lattice
+// TODO maybe this should take a dtype as input instead of being a template?
 template <typename scalar_t>
 struct EncodingFixedParams {
   EncodingFixedParams(const int pos_dim, const int capacity,
                       const int nr_levels, const int nr_feat_per_level,
                       const std::vector<scalar_t>& sigmas_list,
                       const torch::Tensor& random_shift_per_level,
-                      const bool concat_points, const float points_scaling)
+                      const bool concat_points, const scalar_t points_scaling)
       : m_pos_dim(pos_dim),
         m_capacity(capacity),
         m_nr_levels(nr_levels),
@@ -56,7 +57,7 @@ struct EncodingFixedParams {
   torch::Tensor m_scale_factor;
   torch::Tensor m_random_shift_per_level;
   bool m_concat_points;
-  float m_points_scaling;
+  scalar_t m_points_scaling;
 
   torch::Tensor compute_scale_factor_tensor(
       const std::vector<scalar_t> sigmas_list, const int pos_dim) {

@@ -1,4 +1,5 @@
 import math
+from typing import Optional
 
 import torch
 
@@ -18,6 +19,7 @@ class PermutoEncoding(torch.nn.Module):
         appply_random_shift_per_level=True,
         concat_points=False,
         concat_points_scaling=1.0,
+        dtype: Optional[torch.dtype] = None,
     ):
         super(PermutoEncoding, self).__init__()
         self.pos_dim = pos_dim
@@ -28,9 +30,12 @@ class PermutoEncoding(torch.nn.Module):
         self.appply_random_shift_per_level = appply_random_shift_per_level
         self.concat_points = concat_points
         self.concat_points_scaling = concat_points_scaling
+        self.dtype = dtype
 
         # create hashmap values
-        lattice_values = torch.randn(capacity, nr_levels, nr_feat_per_level) * 1e-5
+        lattice_values = (
+            torch.randn(capacity, nr_levels, nr_feat_per_level, dtype=dtype) * 1e-5
+        )
         lattice_values = lattice_values.permute(
             1, 0, 2
         ).contiguous()  # makes it nr_levels x capacity x nr_feat
@@ -39,15 +44,17 @@ class PermutoEncoding(torch.nn.Module):
         # each levels of the hashamp can be randomly shifted so that we minimize
         #  collisions
         if appply_random_shift_per_level:
-            random_shift_per_level = torch.randn(nr_levels, pos_dim) * 10
+            random_shift_per_level = torch.randn(nr_levels, pos_dim, dtype=dtype) * 10
             self.random_shift_per_level = torch.nn.Parameter(
                 random_shift_per_level.cuda()
             )  # we make it a parameter just so it gets saved when we checkpoint
         else:
-            self.random_shift_per_level = torch.nn.Parameter(torch.empty((1)).cuda())
+            self.random_shift_per_level = torch.nn.Parameter(
+                torch.empty((1), dtype=dtype).cuda()
+            )
 
         # make a anneal window of all ones
-        self.anneal_window = torch.ones((nr_levels)).cuda()
+        self.anneal_window = torch.ones((nr_levels), dtype=dtype).cuda()
 
         # make the lattice wrapper
         self.fixed_params, self.lattice = self._make_lattice_wrapper()
@@ -139,7 +146,7 @@ class Coarse2Fine(torch.nn.Module):
     def forward(self, t):
         alpha = (
             t * self.nr_values
-        )  # becasue cosine_easing_window except the alpha to be in range 0, nr_values
+        )  # because cosine_easing_window except the alpha to be in range 0, nr_values
         window = utils.cosine_easing_window(self.nr_values, alpha)
 
         self.last_t = t

@@ -43,7 +43,12 @@ class PermutoEncodingFunc(torch.autograd.Function):
         assert (
             input_struct.m_require_lattice_values_grad
             or input_struct.m_require_positions_grad
-        ), "We cannot perform the backward function on the slicing because we did not precompute the required tensors in the forward pass. To enable this, set the model.train(), set torch.set_grad_enabled(True) and make lattice_values have required_grad=True"
+        ), (
+            "We cannot perform the backward function on the slicing because we did not "
+            "precompute the required tensors in the forward pass. To enable this, set "
+            "the model.train(), set torch.set_grad_enabled(True) and make "
+            "lattice_values have required_grad=True"
+        )
 
         # NOTE we pass the tensors of lattice_values and positiosn explicitly and not
         #  throught the input struct so that we can compute gradients from them for the
