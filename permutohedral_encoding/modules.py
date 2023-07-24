@@ -16,9 +16,9 @@ class PermutoEncoding(torch.nn.Module):
         nr_levels,
         nr_feat_per_level,
         scale_per_level,
-        appply_random_shift_per_level=True,
-        concat_points=False,
-        concat_points_scaling=1.0,
+        apply_random_shift_per_level: bool = True,
+        concat_points: bool = False,
+        concat_points_scaling: float = 1.0,
         dtype: Optional[torch.dtype] = None,
     ):
         super(PermutoEncoding, self).__init__()
@@ -27,7 +27,7 @@ class PermutoEncoding(torch.nn.Module):
         self.nr_levels = nr_levels
         self.nr_feat_per_level = nr_feat_per_level
         self.scale_per_level = scale_per_level
-        self.appply_random_shift_per_level = appply_random_shift_per_level
+        self.apply_random_shift_per_level = apply_random_shift_per_level
         self.concat_points = concat_points
         self.concat_points_scaling = concat_points_scaling
         self.dtype = dtype
@@ -43,12 +43,13 @@ class PermutoEncoding(torch.nn.Module):
 
         # each levels of the hashamp can be randomly shifted so that we minimize
         #  collisions
-        if appply_random_shift_per_level:
+        if apply_random_shift_per_level:
             random_shift_per_level = torch.randn(nr_levels, pos_dim, dtype=dtype) * 10
             self.random_shift_per_level = torch.nn.Parameter(
                 random_shift_per_level.cuda()
             )  # we make it a parameter just so it gets saved when we checkpoint
         else:
+            raise NotImplementedError("No random shift is not implemented.")
             self.random_shift_per_level = torch.nn.Parameter(
                 torch.empty((1), dtype=dtype).cuda()
             )

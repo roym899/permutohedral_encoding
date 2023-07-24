@@ -70,82 +70,91 @@ __global__ void __launch_bounds__(
   // const uint32_t level = 1; // <- the level is the same for all threads
 
   scalar_t pos[pos_dim];
-  for (int i = 0; i < pos_dim; i++) {
+  for (int i = 0; i < pos_dim; ++i) {
     pos[i] = positions[idx][i];
   }
 
   // if we are in one of the extra resolutions and we are also concating the
   // points, then do so
   int idx_extra_level = level - nr_resolutions;
-  if (idx_extra_level >= 0) {  // we are in one of the extra levels
+  if (idx_extra_level >= 0) {
+    // we are in one of the extra levels
     // check if this extra level that we are in is within the bound of the
     // pos_dim we can have for example 2 extra levels with 2 val dim each, so a
     // total of 4 more dimensions. But our pos dim =3 so the last val dim is
-    // just
-    // 0
+    // just 0
 
-    for (int i = 0; i < val_dim; i++) {
-      int position_dimension_to_copy_from =
-          i + idx_extra_level *
-                  val_dim;  // for the first resolution this is 0 and 1 , for
-                            // the other resolution it will be 2 and 3.
+    for (int i = 0; i < val_dim; ++i) {
+      // for the first resolution this is 0 and 1 , for
+      // the other resolution it will be 2 and 3.
+      int position_dimension_to_copy_from = i + idx_extra_level * val_dim;
+
       if (position_dimension_to_copy_from < pos_dim) {
         sliced_values_monolithic[level][i][idx] =
             pos[position_dimension_to_copy_from] * points_scaling;
-      } else {  // we are in the 4 dimensions but we have only posdim=3 so we
-                // just put a zero here
+      } else {
+        // we are in the 4 dimensions but we have only posdim=3 so we
+        // just put a zero here
         sliced_values_monolithic[level][i][idx] = scalar_t{0.0};
       }
     }
-
-    return;
+    return;  // nothing further to do for the concatenated dimensions
   }
 
+  // embed position vectors on d+1 plane
+  // see Adams et al (2010) p. 5 (scale_factor includes alpha_is, see
+  // Encoding.cuh)
   scalar_t elevated[pos_dim + 1];
-
-  scalar_t sm = 0;
+  scalar_t sm{0.0};
 #pragma unroll
-  for (int i = pos_dim; i > 0; i--) {
+  for (int i = pos_dim; i > 0; --i) {
     scalar_t cf = (pos[i - 1] + random_shift_monolithic[level][i - 1]) *
-               scale_factor[level][i - 1];
+                  scale_factor[level][i - 1];
     elevated[i] = sm - i * cf;
     sm += cf;
   }
   elevated[0] = sm;
 
-  int rem0[pos_dim + 1];
-  int rank[pos_dim + 1]{0};
-
   // Find the closest 0-colored simplex through rounding
+  // Adams et al. (2010) p. 4
+  // Conway et al., 1998 p. 447-448 (Algorithm 3, Step 2)
   // greedily search for the closest zero-colored lattice point
-  int sum = 0;
+  int rem0[pos_dim + 1];  // closest remainder-0 point
+  int sum{0};
+  scalar_t factor{scalar_t{1.0} / (pos_dim + 1)};
 #pragma unroll
-  for (int i = 0; i <= pos_dim; i++) {
-    scalar_t v = elevated[i] * (scalar_t{1.0} / (pos_dim + 1));
+  for (int i = 0; i <= pos_dim; ++i) {
+    scalar_t v = elevated[i] * factor;
+    // find nearest multiples of (pos_dim + 1)
     scalar_t up = ceil(v) * (pos_dim + 1);
     scalar_t down = floor(v) * (pos_dim + 1);
-    if (up - elevated[i] < elevated[i] - down) {
+    if (up - elevated[i] < elevated[i] - down) {  // up is closer
       rem0[i] = (int)up;
-    } else {
+    } else {  // down is closer
       rem0[i] = (int)down;
     }
     sum += rem0[i];
   }
   sum /= pos_dim + 1;
 
-// Find the simplex we are in and store it in rank (where rank describes what
-// position coordinate i has in the sorted order of the features values)
+  // Find the simplex we are in and store it in rank (where rank describes what
+  // position coordinate i has in the sorted order of the features values)
+  // Conway et al., 1998 p. 447-448 (Algorithm 3, Step 3)
+  int rank[pos_dim + 1]{0};
 #pragma unroll
-  for (int i = 0; i < pos_dim; i++) {
+  for (int i = 0; i < pos_dim; ++i) {
     scalar_t di = elevated[i] - rem0[i];
-    for (int j = i + 1; j <= pos_dim; j++)
+
+#pragma unroll
+    for (int j = i + 1; j <= pos_dim; ++j)
       if (di < elevated[j] - rem0[j])
-        rank[i]++;
+        ++rank[i];
       else
-        rank[j]++;
+        ++rank[j];
   }
 
-// If the point doesn't lie on the plane (sum != 0) bring it back
+  // If the point doesn't lie on the plane (sum != 0) bring it back
+  // Conway et al., 1998 p. 447-448 (Algorithm 3, Step 4)
 #pragma unroll
   for (int i = 0; i <= pos_dim; i++) {
     rank[i] += sum;
@@ -158,16 +167,23 @@ __global__ void __launch_bounds__(
     }
   }
 
+  // Compute the barycentric coordinates (p.10 in [Adams et al. 2010])
   scalar_t barycentric[pos_dim + 2]{0.0};
-// Compute the barycentric coordinates (p.10 in [Adams etal 2010])
-#pragma unroll
-  for (int i = 0; i <= pos_dim; i++) {
-    scalar_t delta = (elevated[i] - rem0[i]) * (scalar_t{1.0} / (pos_dim + 1));
-    barycentric[pos_dim - rank[i]] += delta;
-    barycentric[pos_dim + 1 - rank[i]] -= delta;
-  }
-  // Wrap around
+  #pragma unroll
+    for (int i = 0; i <= pos_dim; ++i) {
+      scalar_t delta = (elevated[i] - rem0[i]) * factor;
+      barycentric[pos_dim - rank[i]] += delta;
+      barycentric[pos_dim + 1 - rank[i]] -= delta;
+    }
+  // Wrap around */
   barycentric[0] += scalar_t{1.0} + barycentric[pos_dim + 1];
+
+  // TODO why does this only affect the runtime of float???
+  //  without float < half < double
+  //  with half < float < double
+  /* if (barycentric[0] > 1000 && barycentric[1] > 1000 && barycentric[2] > 1000 && */
+  /*     rank[0] > 1000 && rank[1] > 1000 && rank[2] > 1000) */
+  /*   printf("shouldn't happen\n"); */
 
   // here we accumulate the values and the homogeneous term
   scalar_t val_hom_vec[2] = {};
@@ -177,8 +193,8 @@ __global__ void __launch_bounds__(
   int key[pos_dim];
 #pragma unroll
   for (int remainder = 0; remainder <= pos_dim; remainder++) {
-// Compute the location of the lattice point explicitly (all but
-// the last coordinate - it's redundant because they sum to zero)
+    // Compute the location of the lattice point explicitly (all but
+    // the last coordinate - it's redundant because they sum to zero)
 #pragma unroll
     for (int i = 0; i < pos_dim; i++) {
       key[i] = rem0[i] + remainder;
@@ -187,15 +203,6 @@ __global__ void __launch_bounds__(
 
     // Retrieve pointer to the value at this vertex.
     int idx_val = idx_hash_with_collision<pos_dim>(key, lattice_capacity);
-
-    // store also the splatting indices and weight so that they can be used for
-    // the backwards pass
-    // if (require_lattice_values_grad || require_positions_grad){
-    //     //tranposed
-    //     splatting_indices[level][idx][remainder]=idx_val;
-    //     splatting_weights[level][idx][remainder]=barycentric[remainder] *
-    //     w_lvl;
-    // }
 
     // if the vertex exists accumulate its value weighted by the barycentric
     // weight (accumulates also the homogeneous coordinate)
@@ -322,7 +329,7 @@ __global__ void __launch_bounds__(
   }
 
   float barycentric[pos_dim + 2]{0.0f};
-// Compute the barycentric coordinates (p.10 in [Adams etal 2010])
+// Compute the barycentric coordinates (p.10 in [Adams et al. 2010])
 #pragma unroll
   for (int i = 0; i <= pos_dim; i++) {
     float delta = (elevated[i] - rem0[i]) * (1.0f / (pos_dim + 1));
@@ -467,7 +474,7 @@ __global__ void __launch_bounds__(
   }
 
   // float barycentric[pos_dim + 2]{0.0f};
-  // // Compute the barycentric coordinates (p.10 in [Adams etal 2010])
+  // // Compute the barycentric coordinates (p.10 in [Adams et al. 2010])
   // #pragma unroll
   // for (int i = 0; i <= pos_dim; i++) {
   //     float delta = (elevated[i] - rem0[i]) * (1.0f / (pos_dim + 1));
@@ -709,7 +716,7 @@ __global__ void __launch_bounds__(
   }
 
   float barycentric[pos_dim + 2]{0.0f};
-// Compute the barycentric coordinates (p.10 in [Adams etal 2010])
+// Compute the barycentric coordinates (p.10 in [Adams et al. 2010])
 #pragma unroll
   for (int i = 0; i <= pos_dim; i++) {
     float delta = (elevated[i] - rem0[i]) * (1.0f / (pos_dim + 1));
