@@ -167,23 +167,34 @@ __global__ void __launch_bounds__(
     }
   }
 
-  // Compute the barycentric coordinates (p.10 in [Adams et al. 2010])
-  scalar_t barycentric[pos_dim + 2]{0.0};
-  #pragma unroll
-    for (int i = 0; i <= pos_dim; ++i) {
-      scalar_t delta = (elevated[i] - rem0[i]) * factor;
-      barycentric[pos_dim - rank[i]] += delta;
-      barycentric[pos_dim + 1 - rank[i]] -= delta;
+  // Compute the barycentric coordinates
+  // Baek et al., 2009 (Proposition 4.2)
+  scalar_t barycentric[pos_dim + 2]{};
+#pragma unroll
+  for (int i = 0; i <= pos_dim; ++i) {
+    scalar_t delta = (elevated[i] - rem0[i]) * factor;
+    // NOTE
+    //   1. the original implementation (below) is somehow significantly slower
+    //   for float16. Could not find an explanation why.
+    //   2. for original implementation float32 was faster than float16; with
+    //   this float16 is faster than float32.
+    for (int j = 0; j <= pos_dim; ++j) {
+      if (j != rank[i]) continue;
+      barycentric[pos_dim - j] += delta;
+      barycentric[pos_dim + 1 - j] -= delta;
     }
-  // Wrap around */
+  }
   barycentric[0] += scalar_t{1.0} + barycentric[pos_dim + 1];
 
-  // TODO why does this only affect the runtime of float???
-  //  without float < half < double
-  //  with half < float < double
-  /* if (barycentric[0] > 1000 && barycentric[1] > 1000 && barycentric[2] > 1000 && */
-  /*     rank[0] > 1000 && rank[1] > 1000 && rank[2] > 1000) */
-  /*   printf("shouldn't happen\n"); */
+  /* // Original Implementation */
+  /* scalar_t barycentric[pos_dim + 2]{}; */
+  /* #pragma unroll */
+  /* for (int i = 0; i <= pos_dim; i++) { */
+  /*   scalar_t delta = (elevated[i] - rem0[i]) * factor; */
+  /*   barycentric[pos_dim - rnk[i]] += delta; */
+  /*   barycentric[pos_dim + 1 - rnk[i]] -= delta; */
+  /* } */
+  /* barycentric[0] += scalar_t{1.0} + barycentric[pos_dim + 1]; */
 
   // here we accumulate the values and the homogeneous term
   scalar_t val_hom_vec[2] = {};
@@ -328,8 +339,11 @@ __global__ void __launch_bounds__(
     }
   }
 
+  // Compute the barycentric coordinates (p.10 in [Adams et al. 2010])
+  // The actual barycentric coordinates are only pos_dim + 1 dimensional; but
+  // here a trick is used to simplify the loop, the first value is calculated
+  // after the loop; the last value of this array should not be used after this
   float barycentric[pos_dim + 2]{0.0f};
-// Compute the barycentric coordinates (p.10 in [Adams et al. 2010])
 #pragma unroll
   for (int i = 0; i <= pos_dim; i++) {
     float delta = (elevated[i] - rem0[i]) * (1.0f / (pos_dim + 1));

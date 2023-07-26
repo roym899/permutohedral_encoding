@@ -8,6 +8,7 @@ import permutohedral_encoding
 # torch.backends.cudnn.enabled = False
 torch.backends.cudnn.benchmark = True
 
+torch.manual_seed(0)
 
 def benchmark(f, name, trials, skip_first_n=3, **kwargs):
     global mlps, queries
@@ -36,11 +37,11 @@ def benchmark(f, name, trials, skip_first_n=3, **kwargs):
 
 
 # create encoding
-pos_dim = 2
+pos_dim = 3
 capacity = pow(2, 12)
 nr_levels = 24
 nr_feat_per_level = 2
-coarsest_scale = 1
+coarsest_scale = 0.1
 finest_scale = 0.001
 scale_list = np.geomspace(coarsest_scale, finest_scale, num=nr_levels)
 
@@ -55,9 +56,9 @@ encoding_f64 = permutohedral_encoding.PermutoEncoding(
 )
 
 num_points = 30000000
-points_f16 = torch.rand(num_points, 2, dtype=torch.float16).to("cuda")
-points_f32 = torch.rand(num_points, 2, dtype=torch.float32).to("cuda")
-points_f64 = torch.rand(num_points, 2, dtype=torch.float64).to("cuda")
+points_f16 = torch.rand(num_points, pos_dim, dtype=torch.float16).to("cuda")
+points_f32 = torch.rand(num_points, pos_dim, dtype=torch.float32).to("cuda")
+points_f64 = torch.rand(num_points, pos_dim, dtype=torch.float64).to("cuda")
 a16 = torch.rand(5000, 5000, device="cuda", dtype=torch.float16)
 a32 = torch.rand(5000, 5000, device="cuda", dtype=torch.float32)
 a64 = torch.rand(5000, 5000, device="cuda", dtype=torch.float64)
@@ -86,14 +87,18 @@ def f32():
 def f64():
     encoding_f64(points_f64)
 
+def test_f16():
+    res = encoding_f16(points_f16)
+    print(res[0])
 
-f16(), print("f16 forward works")
-f32(), print("f32 forward works")
-f64(), print("f64 forward works")
+test_f16()
+# f16(), print("f16 forward works")
+# f32(), print("f32 forward works")
+# f64(), print("f64 forward works")
 
-benchmark(f16, "f16 forward", 30)
-benchmark(f32, "f32 forward", 30)
-benchmark(f64, "f64 forward", 30)
+benchmark(f16, "f16 forward", 10)
+benchmark(f32, "f32 forward", 10)
+benchmark(f64, "f64 forward", 10)
 
 benchmark(aa16, "aa16 forward", 10)
 benchmark(aa32, "aa32 forward", 10)
