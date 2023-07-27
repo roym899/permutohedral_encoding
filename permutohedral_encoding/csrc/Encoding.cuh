@@ -71,7 +71,7 @@ struct EncodingFixedParams {
     for (int res_idx = 0; res_idx < nr_resolutions; res_idx++) {
       for (int i = 0; i < pos_dim; i++) {
         scale_factor_tensor[res_idx][i] =
-            1.0 / (std::sqrt((float)(i + 1) * (i + 2))) * invStdDev;
+            1.0 / (std::sqrt((double)(i + 1) * (i + 2))) * invStdDev;
         scale_factor_tensor[res_idx][i] =
             scale_factor_tensor[res_idx][i] / sigmas_list[res_idx];
       }

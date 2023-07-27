@@ -190,8 +190,8 @@ __global__ void __launch_bounds__(
   /* #pragma unroll */
   /* for (int i = 0; i <= pos_dim; i++) { */
   /*   scalar_t delta = (elevated[i] - rem0[i]) * factor; */
-  /*   barycentric[pos_dim - rnk[i]] += delta; */
-  /*   barycentric[pos_dim + 1 - rnk[i]] -= delta; */
+  /*   barycentric[pos_dim - rank[i]] += delta; */
+  /*   barycentric[pos_dim + 1 - rank[i]] -= delta; */
   /* } */
   /* barycentric[0] += scalar_t{1.0} + barycentric[pos_dim + 1]; */
 
@@ -219,7 +219,7 @@ __global__ void __launch_bounds__(
     scalar_t w = barycentric[remainder] * w_lvl;
 
     // TODO idx_val and w is the only thing required for backward_gpu (store
-    // these?)
+    //   these?)
 
     // vectorized loads
     scalar_t* ptr_base = lattice_values_monolithic.data();

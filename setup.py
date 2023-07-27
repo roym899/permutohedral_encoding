@@ -55,7 +55,6 @@ else:
 
 
 if os.name == "nt":
-
     def find_cl_path():
         import glob
 
@@ -115,10 +114,14 @@ if os.system("nvcc --version") == 0:
 min_compute_capability = min(compute_capabilities)
 
 base_nvcc_flags = [
-    "-std=c++14",
+    "-std=c++17",
+    # "--ptx",
+    # "--compiler-options -Wall",
     "--generate-line-info",
     "--extended-lambda",
     "--expt-relaxed-constexpr",
+    # "--use_fast_math",
+    # "-Xptxas",
     # NOTE pytorch disables CUDA's half precisoin by default since they ship their own
     #  https://discuss.pytorch.org/t/cuda-no-half2-operators-for-cuda-9-2/18365/4
     # TODO it seems to compile fine with keeping these definitions?
@@ -130,7 +133,7 @@ base_nvcc_flags = [
 ]
 
 if os.name == "posix":
-    base_cflags = ["-std=c++14"]
+    base_cflags = ["-std=c++17"]
     base_nvcc_flags += [
         "-Xcompiler=-Wno-float-conversion",
         "-Xcompiler=-fno-strict-aliasing",
@@ -159,6 +162,7 @@ def make_extension(compute_capability: int) -> CUDAExtension:
         for code in ["compute", "sm"]
     ]
     definitions = base_definitions + [f"-DPENC_MIN_GPU_ARCH={compute_capability}"]
+    print(definitions)
 
     source_files = base_source_files
 
@@ -201,7 +205,7 @@ setup(
     maintainer="Radu Alexandru Rosu",
     maintainer_email="rosu@ais.uni-bonn.de",
     download_url="https://github.com/RaduAlexandru/permutohedral_encoding",
-    package=["permutohedral_encoding"],
+    packages=["permutohedral_encoding"],
     install_requires=["torch"],
     zip_safe=False,
     ext_modules=ext_modules,
