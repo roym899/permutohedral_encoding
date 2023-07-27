@@ -10,6 +10,7 @@ torch.backends.cudnn.benchmark = True
 
 torch.manual_seed(0)
 
+
 def benchmark(f, name, trials, skip_first_n=3, **kwargs):
     global mlps, queries
     t_min = 1000
@@ -32,7 +33,7 @@ def benchmark(f, name, trials, skip_first_n=3, **kwargs):
         total += t2 - t1
 
     avg = total / trials
-    print(f"{name:40s}{trials=}\t{t_min=:.4f}\t{t_max=:.4f}\t{avg=:.4f}")
+    print(f"{name:30s}{trials=}\t{t_min=:.4f}\t{t_max=:.4f}\t{avg=:.4f}")
     return avg
 
 
@@ -45,61 +46,36 @@ coarsest_scale = 0.1
 finest_scale = 0.001
 scale_list = np.geomspace(coarsest_scale, finest_scale, num=nr_levels)
 
-encoding_f16 = permutohedral_encoding.PermutoEncoding(
-    pos_dim, capacity, nr_levels, nr_feat_per_level, scale_list, dtype=torch.float16
-)
-encoding_f32 = permutohedral_encoding.PermutoEncoding(
-    pos_dim, capacity, nr_levels, nr_feat_per_level, scale_list, dtype=torch.float32
-)
-encoding_f64 = permutohedral_encoding.PermutoEncoding(
-    pos_dim, capacity, nr_levels, nr_feat_per_level, scale_list, dtype=torch.float64
-)
+encoding = {
+    dtype: permutohedral_encoding.PermutoEncoding(
+        pos_dim, capacity, nr_levels, nr_feat_per_level, scale_list, dtype=dtype
+    )
+    for dtype in (torch.float16, torch.float32, torch.float64)
+}
 
 num_points = 30000000
-points_f16 = torch.rand(num_points, pos_dim, dtype=torch.float16).to("cuda")
-points_f32 = torch.rand(num_points, pos_dim, dtype=torch.float32).to("cuda")
-points_f64 = torch.rand(num_points, pos_dim, dtype=torch.float64).to("cuda")
-a16 = torch.rand(5000, 5000, device="cuda", dtype=torch.float16)
-a32 = torch.rand(5000, 5000, device="cuda", dtype=torch.float32)
-a64 = torch.rand(5000, 5000, device="cuda", dtype=torch.float64)
+points = {
+    dtype: torch.rand(num_points, pos_dim, dtype=dtype, device="cuda")
+    for dtype in (torch.float16, torch.float32, torch.float64)
+}
+
+matrix = {
+    dtype: torch.rand(5000, 5000, dtype=dtype, device="cuda")
+    for dtype in (torch.float16, torch.float32, torch.float64)
+}
 
 
-def aa16():
-    res = a16 @ a16
+def mm_f(dtype):
+    res = matrix[dtype] @ matrix[dtype]
 
 
-def aa32():
-    res = a32 @ a32
+def enc_f(dtype):
+    encoding[dtype](points[dtype])
 
 
-def aa64():
-    res = a64 @ a64
+dtypes = (torch.float16, torch.float32, torch.float64)
+funcs = (mm_f, enc_f)
 
-
-def f16():
-    encoding_f16(points_f16)
-
-
-def f32():
-    encoding_f32(points_f32)
-
-
-def f64():
-    encoding_f64(points_f64)
-
-def test_f16():
-    res = encoding_f16(points_f16)
-    print(res[0])
-
-test_f16()
-# f16(), print("f16 forward works")
-# f32(), print("f32 forward works")
-# f64(), print("f64 forward works")
-
-benchmark(f16, "f16 forward", 10)
-benchmark(f32, "f32 forward", 10)
-benchmark(f64, "f64 forward", 10)
-
-benchmark(aa16, "aa16 forward", 10)
-benchmark(aa32, "aa32 forward", 10)
-benchmark(aa64, "aa64 forward", 10)
+for func in funcs:
+    for dtype in dtypes:
+        benchmark(lambda: func(dtype), f"{dtype} {func.__name__}", 10)
