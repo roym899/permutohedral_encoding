@@ -53,7 +53,7 @@ encoding = {
     for dtype in (torch.float16, torch.float32, torch.float64)
 }
 
-num_points = 30000000
+num_points = 10000000
 points = {
     dtype: torch.rand(num_points, pos_dim, dtype=dtype, device="cuda")
     for dtype in (torch.float16, torch.float32, torch.float64)
@@ -63,6 +63,11 @@ matrix = {
     dtype: torch.rand(5000, 5000, dtype=dtype, device="cuda")
     for dtype in (torch.float16, torch.float32, torch.float64)
 }
+acc = {
+    dtype: torch.zeros(num_points, dtype=dtype, device="cuda")
+    for dtype in (torch.float16, torch.float32, torch.float64)
+}
+ind = torch.randint(num_points, size=(3 * num_points,), device="cuda")
 
 
 def mm_f(dtype):
@@ -70,11 +75,33 @@ def mm_f(dtype):
 
 
 def enc_f(dtype):
-    encoding[dtype](points[dtype])
+    with torch.no_grad():
+        encoding[dtype](points[dtype])
+
+
+def enc_fnb_all(dtype):
+    points[dtype].requires_grad = True
+    res = encoding[dtype](points[dtype])
+    loss = res.sum()
+    loss.backward()
+
+
+def enc_fnb_lat(dtype):
+    points[dtype].requires_grad = False
+    res = encoding[dtype](points[dtype])
+    loss = res.sum()
+    loss.backward()
+
+
+def ind_add(dtype):
+    res = torch.index_add(acc[dtype], 0, ind, points[dtype].flatten())
 
 
 dtypes = (torch.float16, torch.float32, torch.float64)
-funcs = (mm_f, enc_f)
+# dtypes = (torch.float32,)
+# funcs = (mm_f, enc_f, enc_fnb_allgrads, enc_fnb_latgrads)
+# funcs = (ind_add, enc_f, enc_fnb_all, enc_fnb_lat)
+funcs = (ind_add,)
 
 for func in funcs:
     for dtype in dtypes:

@@ -36,9 +36,8 @@ class PermutoEncoding(torch.nn.Module):
         lattice_values = (
             torch.randn(capacity, nr_levels, nr_feat_per_level, dtype=dtype) * 1e-5
         )
-        lattice_values = lattice_values.permute(
-            1, 0, 2
-        ).contiguous()  # makes it nr_levels x capacity x nr_feat
+        # make it nr_levels x capacity x nr_feat
+        lattice_values = lattice_values.permute(1, 0, 2).contiguous()
         self.lattice_values = torch.nn.Parameter(lattice_values.cuda())
 
         # each levels of the hashamp can be randomly shifted so that we minimize
@@ -49,10 +48,10 @@ class PermutoEncoding(torch.nn.Module):
                 random_shift_per_level.cuda()
             )  # we make it a parameter just so it gets saved when we checkpoint
         else:
-            raise NotImplementedError("No random shift is not implemented.")
             self.random_shift_per_level = torch.nn.Parameter(
                 torch.empty((1), dtype=dtype).cuda()
             )
+            raise NotImplementedError("No random shift is not implemented.")
 
         # make a anneal window of all ones
         self.anneal_window = torch.ones((nr_levels), dtype=dtype).cuda()

@@ -176,32 +176,28 @@ Encoding<POS_DIM, NR_FEAT_PER_LEVEL>::backward(
       1};  // the blocks are executed in order, first the blocks for the first
            // resolution, then the second and so on
 
-  // torch::cuda::synchronize();
-  // auto t1 = std::chrono::high_resolution_clock::now();
-  // assumes lattice_values_monolithic_grad=torch::zeros({ nr_resolutions,
-  // val_dim, capacity },  torch::dtype(torch::kFloat32).device(torch::kCUDA, 0)
-  // );
-  backward_gpu<POS_DIM, NR_FEAT_PER_LEVEL>
-      <<<blocks, BLOCK_SIZE_BACK, 0, at::cuda::getCurrentCUDAStream()>>>(
-          nr_positions, capacity,
-          input.m_lattice_values
-              .packed_accessor32<float, 3, torch::RestrictPtrTraits>(),
-          input.m_positions_raw
-              .packed_accessor32<float, 2, torch::RestrictPtrTraits>(),
-          m_fixed_params.m_scale_factor
-              .packed_accessor32<float, 2, torch::RestrictPtrTraits>(),
-          m_fixed_params.m_random_shift_per_level
-              .packed_accessor32<float, 2, torch::RestrictPtrTraits>(),
-          input.m_anneal_window
-              .packed_accessor32<float, 1, torch::RestrictPtrTraits>(),
-          grad_sliced_values_monolithic
-              .packed_accessor32<float, 3, torch::RestrictPtrTraits>(),
-          lattice_values_monolithic_grad
-              .packed_accessor32<float, 3, torch::RestrictPtrTraits>(),
-          positions_grad
-              .packed_accessor32<float, 2, torch::RestrictPtrTraits>(),
-          m_fixed_params.m_concat_points, input.m_require_lattice_values_grad,
-          input.m_require_positions_grad);
+  if (input.m_require_lattice_values_grad) {
+    backward_gpu<POS_DIM, NR_FEAT_PER_LEVEL>
+        <<<blocks, BLOCK_SIZE_BACK, 0, at::cuda::getCurrentCUDAStream()>>>(
+            nr_positions, capacity,
+            input.m_lattice_values
+                .packed_accessor32<float, 3, torch::RestrictPtrTraits>(),
+            input.m_positions_raw
+                .packed_accessor32<float, 2, torch::RestrictPtrTraits>(),
+            m_fixed_params.m_scale_factor
+                .packed_accessor32<float, 2, torch::RestrictPtrTraits>(),
+            m_fixed_params.m_random_shift_per_level
+                .packed_accessor32<float, 2, torch::RestrictPtrTraits>(),
+            input.m_anneal_window
+                .packed_accessor32<float, 1, torch::RestrictPtrTraits>(),
+            grad_sliced_values_monolithic
+                .packed_accessor32<float, 3, torch::RestrictPtrTraits>(),
+            lattice_values_monolithic_grad
+                .packed_accessor32<float, 3, torch::RestrictPtrTraits>(),
+            positions_grad
+                .packed_accessor32<float, 2, torch::RestrictPtrTraits>(),
+            m_fixed_params.m_concat_points);
+  }
 
   if (input.m_require_positions_grad) {
     backward_gpu_only_pos<POS_DIM, NR_FEAT_PER_LEVEL>
@@ -227,17 +223,9 @@ Encoding<POS_DIM, NR_FEAT_PER_LEVEL>::backward(
             input.m_require_positions_grad);
   }
 
-  // positions_grad=positions_grad.sum(0);
-
   lattice_values_monolithic_grad =
       lattice_values_monolithic_grad.permute({0, 2, 1});
   positions_grad = positions_grad.transpose(0, 1);
-  // torch::cuda::synchronize();
-  // auto t2 = std::chrono::high_resolution_clock::now();
-  // std::cout << "backward took "
-  //           <<
-  //           std::chrono::duration_cast<std::chrono::milliseconds>(t2-t1).count()
-  //           << " milliseconds\n";
 
   return std::make_tuple(lattice_values_monolithic_grad, positions_grad);
 }

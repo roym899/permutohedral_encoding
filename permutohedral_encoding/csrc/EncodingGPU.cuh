@@ -67,7 +67,6 @@ __global__ void __launch_bounds__(
 
   const uint32_t level =
       blockIdx.y;  // <- the level is the same for all threads
-  // const uint32_t level = 1; // <- the level is the same for all threads
 
   scalar_t pos[pos_dim];
   for (int i = 0; i < pos_dim; ++i) {
@@ -219,6 +218,9 @@ __global__ void __launch_bounds__(
     // weight (accumulates also the homogeneous coordinate)
     scalar_t w = barycentric[remainder] * w_lvl;
 
+    // TODO idx_val and w is the only thing required for backward_gpu (store
+    // these?)
+
     // vectorized loads
     scalar_t* ptr_base = lattice_values_monolithic.data();
     scalar_t* ptr_value = ptr_base +
@@ -256,25 +258,20 @@ __global__ void __launch_bounds__(
             lattice_values_monolithic_grad,
         torch::PackedTensorAccessor32<float, 2, torch::RestrictPtrTraits>
             positions_grad,
-        const bool concat_points, const bool require_lattice_values_grad,
-        const bool require_positions_grad) {
-  // values_vertices refers to the values that the lattice had in the forward
-  // pass. it has size m_hash_table_capcity x (val_dim+1) grad_sliced_values is
-  // the gradient of the loss with respect to the sliced out values which has
-  // size nr_positions x val_dim
-  const int idx = blockIdx.x * blockDim.x +
-                  threadIdx.x;  // each thread will deal with one position
+        const bool concat_points) {
+  // lattice_values_monolithic refers to the values that the lattice had in the
+  // forward pass. it has size m_hash_table_capcity x (val_dim+1)
+  // grad_sliced_values is the gradient of the loss with respect to the sliced
+  // out values which has size nr_positions x val_dim
+
+  // code should be the same as forward (without concatenating positions in the
+  // beginning) until last loop
+  const int idx = blockIdx.x * blockDim.x + threadIdx.x;
   if (idx >= nr_positions) {
     return;
   }
 
-  const uint32_t level =
-      blockIdx.y;  // <- the level is the same for all threads
-
-  // default
-  float2 grad_sliced_val_cur;
-  grad_sliced_val_cur.x = grad_sliced_values_monolithic[level][0][idx];
-  grad_sliced_val_cur.y = grad_sliced_values_monolithic[level][1][idx];
+  const uint32_t level = blockIdx.y;
 
   float pos[pos_dim];
   for (int i = 0; i < pos_dim; i++) {
@@ -285,8 +282,6 @@ __global__ void __launch_bounds__(
   float sm = 0;
 #pragma unroll
   for (int i = pos_dim; i > 0; i--) {
-    // float cf = (pos[i-1] +random_shift_constant[level*pos_dim + i-1]  ) *
-    // scale_factor_constant[level*pos_dim + i-1];
     float cf = (pos[i - 1] + random_shift_monolithic[level][i - 1]) *
                scale_factor[level][i - 1];
     elevated[i] = sm - i * cf;
@@ -297,8 +292,6 @@ __global__ void __launch_bounds__(
   int rem0[pos_dim + 1];
   int rank[pos_dim + 1]{0};
 
-  // Find the closest 0-colored simplex through rounding
-  // greedily search for the closest zero-colored lattice point
   int sum = 0;
 #pragma unroll
   for (int i = 0; i <= pos_dim; i++) {
@@ -314,8 +307,6 @@ __global__ void __launch_bounds__(
   }
   sum /= pos_dim + 1;
 
-// Find the simplex we are in and store it in rank (where rank describes what
-// position coordinate i has in the sorted order of the features values)
 #pragma unroll
   for (int i = 0; i < pos_dim; i++) {
     double di = elevated[i] - rem0[i];
@@ -326,7 +317,6 @@ __global__ void __launch_bounds__(
         rank[j]++;
   }
 
-// If the point doesn't lie on the plane (sum != 0) bring it back
 #pragma unroll
   for (int i = 0; i <= pos_dim; i++) {
     rank[i] += sum;
@@ -339,10 +329,6 @@ __global__ void __launch_bounds__(
     }
   }
 
-  // Compute the barycentric coordinates (p.10 in [Adams et al. 2010])
-  // The actual barycentric coordinates are only pos_dim + 1 dimensional; but
-  // here a trick is used to simplify the loop, the first value is calculated
-  // after the loop; the last value of this array should not be used after this
   float barycentric[pos_dim + 2]{0.0f};
 #pragma unroll
   for (int i = 0; i <= pos_dim; i++) {
@@ -350,33 +336,31 @@ __global__ void __launch_bounds__(
     barycentric[pos_dim - rank[i]] += delta;
     barycentric[pos_dim + 1 - rank[i]] -= delta;
   }
-  // Wrap around
   barycentric[0] += 1.0f + barycentric[pos_dim + 1];
+
+  float grad_sliced_val_cur[] = {grad_sliced_values_monolithic[level][0][idx],
+                                 grad_sliced_values_monolithic[level][1][idx]};
 
   float w_lvl = anneal_window[level];
 
   int key[pos_dim];
-  if (require_lattice_values_grad) {
 #pragma unroll
-    for (int remainder = 0; remainder <= pos_dim; remainder++) {
-// Compute the location of the lattice point explicitly (all but
-// the last coordinate - it's redundant because they sum to zero)
+  for (int remainder = 0; remainder <= pos_dim; remainder++) {
 #pragma unroll
-      for (int i = 0; i < pos_dim; i++) {
-        key[i] = rem0[i] + remainder;
-        if (rank[i] > pos_dim - remainder) key[i] -= (pos_dim + 1);
-      }
-
-      // Retrieve pointer to the value at this vertex.
-      int idx_val = idx_hash_with_collision<pos_dim>(key, lattice_capacity);
-
-      float w = barycentric[remainder] * w_lvl;
-
-      atomicAdd(&lattice_values_monolithic_grad[level][0][idx_val],
-                grad_sliced_val_cur.x * w);
-      atomicAdd(&lattice_values_monolithic_grad[level][1][idx_val],
-                grad_sliced_val_cur.y * w);
+    for (int i = 0; i < pos_dim; i++) {
+      key[i] = rem0[i] + remainder;
+      if (rank[i] > pos_dim - remainder) key[i] -= (pos_dim + 1);
     }
+
+    // Retrieve pointer to the value at this vertex.
+    int idx_val = idx_hash_with_collision<pos_dim>(key, lattice_capacity);
+
+    float w = barycentric[remainder] * w_lvl;
+
+    atomicAdd(&lattice_values_monolithic_grad[level][0][idx_val],
+              grad_sliced_val_cur[0] * w);
+    atomicAdd(&lattice_values_monolithic_grad[level][1][idx_val],
+              grad_sliced_val_cur[1] * w);
   }
 }
 
