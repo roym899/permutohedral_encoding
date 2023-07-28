@@ -234,7 +234,7 @@ __global__ void __launch_bounds__(
   sliced_values_monolithic[level][1][idx] = val_hom_vec[1];
 }
 
-template <int pos_dim, int val_dim>
+template <int pos_dim, int val_dim, typename scalar_t>
 __global__ void __launch_bounds__(
     BLOCK_SIZE_BACK)  // since the block size is known at compile time we can
                       // specify it to the kernel and therefore cuda doesnt need
@@ -242,22 +242,26 @@ __global__ void __launch_bounds__(
                       // registry usage
     backward_gpu(
         const int nr_positions, const int lattice_capacity,
-        const torch::PackedTensorAccessor32<float, 3, torch::RestrictPtrTraits>
+        const torch::PackedTensorAccessor32<scalar_t, 3,
+                                            torch::RestrictPtrTraits>
             lattice_values_monolithic,
-        const torch::PackedTensorAccessor32<float, 2, torch::RestrictPtrTraits>
+        const torch::PackedTensorAccessor32<scalar_t, 2,
+                                            torch::RestrictPtrTraits>
             positions,
-        const torch::PackedTensorAccessor32<float, 2, torch::RestrictPtrTraits>
+        const torch::PackedTensorAccessor32<scalar_t, 2,
+                                            torch::RestrictPtrTraits>
             scale_factor,
-        const torch::PackedTensorAccessor32<float, 2, torch::RestrictPtrTraits>
+        const torch::PackedTensorAccessor32<scalar_t, 2,
+                                            torch::RestrictPtrTraits>
             random_shift_monolithic,
-        const torch::PackedTensorAccessor32<float, 1, torch::RestrictPtrTraits>
+        const torch::PackedTensorAccessor32<scalar_t, 1,
+                                            torch::RestrictPtrTraits>
             anneal_window,
-        const torch::PackedTensorAccessor32<float, 3, torch::RestrictPtrTraits>
+        const torch::PackedTensorAccessor32<scalar_t, 3,
+                                            torch::RestrictPtrTraits>
             grad_sliced_values_monolithic,
         torch::PackedTensorAccessor32<float, 3, torch::RestrictPtrTraits>
             lattice_values_monolithic_grad,
-        torch::PackedTensorAccessor32<float, 2, torch::RestrictPtrTraits>
-            positions_grad,
         const bool concat_points) {
   // lattice_values_monolithic refers to the values that the lattice had in the
   // forward pass. it has size m_hash_table_capcity x (val_dim+1)
@@ -273,48 +277,51 @@ __global__ void __launch_bounds__(
 
   const uint32_t level = blockIdx.y;
 
-  float pos[pos_dim];
+  scalar_t pos[pos_dim];
   for (int i = 0; i < pos_dim; i++) {
     pos[i] = positions[idx][i];
   }
 
-  float elevated[pos_dim + 1];
-  float sm = 0;
+  scalar_t elevated[pos_dim + 1];
+  scalar_t sm{};
 #pragma unroll
   for (int i = pos_dim; i > 0; i--) {
-    float cf = (pos[i - 1] + random_shift_monolithic[level][i - 1]) *
-               scale_factor[level][i - 1];
+    scalar_t cf = (pos[i - 1] + random_shift_monolithic[level][i - 1]) *
+                  scale_factor[level][i - 1];
     elevated[i] = sm - i * cf;
     sm += cf;
   }
   elevated[0] = sm;
 
   int rem0[pos_dim + 1];
-  int rank[pos_dim + 1]{0};
-
-  int sum = 0;
+  int sum{0};
+  scalar_t factor{scalar_t{1.0} / (pos_dim + 1)};
 #pragma unroll
-  for (int i = 0; i <= pos_dim; i++) {
-    float v = elevated[i] * (1.0f / (pos_dim + 1));
-    float up = ceil(v) * (pos_dim + 1);
-    float down = floor(v) * (pos_dim + 1);
-    if (up - elevated[i] < elevated[i] - down) {
+  for (int i = 0; i <= pos_dim; ++i) {
+    scalar_t v = elevated[i] * factor;
+    // find nearest multiples of (pos_dim + 1)
+    scalar_t up = ceil(v) * (pos_dim + 1);
+    scalar_t down = floor(v) * (pos_dim + 1);
+    if (up - elevated[i] < elevated[i] - down) {  // up is closer
       rem0[i] = (int)up;
-    } else {
+    } else {  // down is closer
       rem0[i] = (int)down;
     }
     sum += rem0[i];
   }
   sum /= pos_dim + 1;
 
+  int rank[pos_dim + 1]{0};
 #pragma unroll
-  for (int i = 0; i < pos_dim; i++) {
-    double di = elevated[i] - rem0[i];
-    for (int j = i + 1; j <= pos_dim; j++)
+  for (int i = 0; i < pos_dim; ++i) {
+    scalar_t di = elevated[i] - rem0[i];
+
+#pragma unroll
+    for (int j = i + 1; j <= pos_dim; ++j)
       if (di < elevated[j] - rem0[j])
-        rank[i]++;
+        ++rank[i];
       else
-        rank[j]++;
+        ++rank[j];
   }
 
 #pragma unroll
@@ -329,19 +336,28 @@ __global__ void __launch_bounds__(
     }
   }
 
-  float barycentric[pos_dim + 2]{0.0f};
+  scalar_t barycentric[pos_dim + 2]{};
 #pragma unroll
-  for (int i = 0; i <= pos_dim; i++) {
-    float delta = (elevated[i] - rem0[i]) * (1.0f / (pos_dim + 1));
-    barycentric[pos_dim - rank[i]] += delta;
-    barycentric[pos_dim + 1 - rank[i]] -= delta;
+  for (int i = 0; i <= pos_dim; ++i) {
+    scalar_t delta = (elevated[i] - rem0[i]) * factor;
+    // NOTE
+    //   1. the original implementation (below) is somehow significantly slower
+    //   for float16. Could not find an explanation why.
+    //   2. for original implementation float32 was faster than float16; with
+    //   this float16 is faster than float32.
+    for (int j = 0; j <= pos_dim; ++j) {
+      if (j != rank[i]) continue;
+      barycentric[pos_dim - j] += delta;
+      barycentric[pos_dim + 1 - j] -= delta;
+    }
   }
-  barycentric[0] += 1.0f + barycentric[pos_dim + 1];
+  barycentric[0] += scalar_t{1.0} + barycentric[pos_dim + 1];
 
-  float grad_sliced_val_cur[] = {grad_sliced_values_monolithic[level][0][idx],
-                                 grad_sliced_values_monolithic[level][1][idx]};
+  scalar_t grad_sliced_val_cur[] = {
+      grad_sliced_values_monolithic[level][0][idx],
+      grad_sliced_values_monolithic[level][1][idx]};
 
-  float w_lvl = anneal_window[level];
+  scalar_t w_lvl = anneal_window[level];
 
   int key[pos_dim];
 #pragma unroll
@@ -355,7 +371,11 @@ __global__ void __launch_bounds__(
     // Retrieve pointer to the value at this vertex.
     int idx_val = idx_hash_with_collision<pos_dim>(key, lattice_capacity);
 
-    float w = barycentric[remainder] * w_lvl;
+    scalar_t w = barycentric[remainder] * w_lvl;
+
+    /* TODO maybe can layout to use half2 here instead
+     * for now just use float for atomicAdd
+     * see also https://github.com/NVlabs/tiny-cuda-nn/blob/28ca991f99b44d10387d73077c07ccfdd7f96275/include/tiny-cuda-nn/encodings/grid.h#L652-L665 */
 
     atomicAdd(&lattice_values_monolithic_grad[level][0][idx_val],
               grad_sliced_val_cur[0] * w);

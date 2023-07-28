@@ -11,6 +11,33 @@ torch.backends.cudnn.benchmark = True
 torch.manual_seed(0)
 
 
+def mm_f(dtype):
+    res = matrix[dtype] @ matrix[dtype]
+
+
+def enc_f(dtype):
+    with torch.no_grad():
+        encoding[dtype](points[dtype])
+
+
+def enc_fnb_all(dtype):
+    points[dtype].requires_grad = True
+    res = encoding[dtype](points[dtype])
+    loss = res.sum()
+    loss.backward()
+
+
+def enc_fnb_lat(dtype):
+    points[dtype].requires_grad = False
+    res = encoding[dtype](points[dtype])
+    loss = res.sum()
+    loss.backward()
+
+
+def ind_add(dtype):
+    res = torch.index_add(acc[dtype], 0, ind, points[dtype].flatten())
+
+
 def benchmark(f, name, trials, skip_first_n=3, **kwargs):
     global mlps, queries
     t_min = 1000
@@ -45,63 +72,28 @@ nr_feat_per_level = 2
 coarsest_scale = 0.1
 finest_scale = 0.001
 scale_list = np.geomspace(coarsest_scale, finest_scale, num=nr_levels)
+dtypes = (torch.float16, torch.float32, torch.float64)
+# dtypes = (torch.float32,)
+# funcs = (mm_f, enc_f, enc_fnb_allgrads, enc_fnb_latgrads)
+# funcs = (ind_add, enc_f, enc_fnb_all, enc_fnb_lat)
+funcs = (enc_fnb_lat,)
 
 encoding = {
     dtype: permutohedral_encoding.PermutoEncoding(
         pos_dim, capacity, nr_levels, nr_feat_per_level, scale_list, dtype=dtype
     )
-    for dtype in (torch.float16, torch.float32, torch.float64)
+    for dtype in dtypes
 }
 
 num_points = 10000000
 points = {
     dtype: torch.rand(num_points, pos_dim, dtype=dtype, device="cuda")
-    for dtype in (torch.float16, torch.float32, torch.float64)
+    for dtype in dtypes
 }
 
-matrix = {
-    dtype: torch.rand(5000, 5000, dtype=dtype, device="cuda")
-    for dtype in (torch.float16, torch.float32, torch.float64)
-}
-acc = {
-    dtype: torch.zeros(num_points, dtype=dtype, device="cuda")
-    for dtype in (torch.float16, torch.float32, torch.float64)
-}
+matrix = {dtype: torch.rand(5000, 5000, dtype=dtype, device="cuda") for dtype in dtypes}
+acc = {dtype: torch.zeros(num_points, dtype=dtype, device="cuda") for dtype in dtypes}
 ind = torch.randint(num_points, size=(3 * num_points,), device="cuda")
-
-
-def mm_f(dtype):
-    res = matrix[dtype] @ matrix[dtype]
-
-
-def enc_f(dtype):
-    with torch.no_grad():
-        encoding[dtype](points[dtype])
-
-
-def enc_fnb_all(dtype):
-    points[dtype].requires_grad = True
-    res = encoding[dtype](points[dtype])
-    loss = res.sum()
-    loss.backward()
-
-
-def enc_fnb_lat(dtype):
-    points[dtype].requires_grad = False
-    res = encoding[dtype](points[dtype])
-    loss = res.sum()
-    loss.backward()
-
-
-def ind_add(dtype):
-    res = torch.index_add(acc[dtype], 0, ind, points[dtype].flatten())
-
-
-dtypes = (torch.float16, torch.float32, torch.float64)
-# dtypes = (torch.float32,)
-# funcs = (mm_f, enc_f, enc_fnb_allgrads, enc_fnb_latgrads)
-# funcs = (ind_add, enc_f, enc_fnb_all, enc_fnb_lat)
-funcs = (ind_add,)
 
 for func in funcs:
     for dtype in dtypes:
