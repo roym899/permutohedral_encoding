@@ -156,12 +156,10 @@ Encoding<POS_DIM, NR_FEAT_PER_LEVEL>::backward(
   if (input.m_require_positions_grad) {
     positions_grad =
         torch::zeros({pos_dim, nr_positions},
-                     torch::dtype(input.m_lattice_values.scalar_type())
-                         .device(torch::kCUDA, 0));
+                     torch::dtype(torch::kFloat32).device(torch::kCUDA, 0));
   } else {
-    positions_grad =
-        torch::empty({1, 1}, torch::dtype(input.m_lattice_values.scalar_type())
-                                 .device(torch::kCUDA, 0));
+    positions_grad = torch::empty(
+        {1, 1}, torch::dtype(torch::kFloat32).device(torch::kCUDA, 0));
   }
 
   const dim3 blocks = {
@@ -194,31 +192,31 @@ Encoding<POS_DIM, NR_FEAT_PER_LEVEL>::backward(
         }));
   }
 
-  /* if (input.m_require_positions_grad) { */
-  /*   backward_gpu_only_pos<POS_DIM, NR_FEAT_PER_LEVEL> */
-  /*       <<<blocks, BLOCK_SIZE_BACK, 0, at::cuda::getCurrentCUDAStream()>>>(
-   */
-  /*           nr_positions, capacity, */
-  /*           input.m_lattice_values */
-  /*               .packed_accessor32<float, 3, torch::RestrictPtrTraits>(), */
-  /*           input.m_positions_raw */
-  /*               .packed_accessor32<float, 2, torch::RestrictPtrTraits>(), */
-  /*           m_fixed_params.m_scale_factor */
-  /*               .packed_accessor32<float, 2, torch::RestrictPtrTraits>(), */
-  /*           m_fixed_params.m_random_shift_per_level */
-  /*               .packed_accessor32<float, 2, torch::RestrictPtrTraits>(), */
-  /*           input.m_anneal_window */
-  /*               .packed_accessor32<float, 1, torch::RestrictPtrTraits>(), */
-  /*           grad_sliced_values_monolithic */
-  /*               .packed_accessor32<float, 3, torch::RestrictPtrTraits>(), */
-  /*           lattice_values_monolithic_grad */
-  /*               .packed_accessor32<float, 3, torch::RestrictPtrTraits>(), */
-  /*           positions_grad */
-  /*               .packed_accessor32<float, 2, torch::RestrictPtrTraits>(), */
-  /*           m_fixed_params.m_concat_points,
-   * input.m_require_lattice_values_grad, */
-  /*           input.m_require_positions_grad); */
-  /* } */
+  if (input.m_require_positions_grad) {
+    AT_DISPATCH_FLOATING_TYPES_AND_HALF(
+        input.m_lattice_values.scalar_type(), "backward_gpu_only_pos", ([&] {
+          backward_gpu_only_pos<POS_DIM, NR_FEAT_PER_LEVEL><<<
+              blocks, BLOCK_SIZE_BACK, 0, at::cuda::getCurrentCUDAStream()>>>(
+              nr_positions, capacity,
+              input.m_lattice_values
+                  .packed_accessor32<scalar_t, 3, torch::RestrictPtrTraits>(),
+              input.m_positions_raw
+                  .packed_accessor32<scalar_t, 2, torch::RestrictPtrTraits>(),
+              m_fixed_params.m_scale_factor
+                  .packed_accessor32<scalar_t, 2, torch::RestrictPtrTraits>(),
+              m_fixed_params.m_random_shift_per_level
+                  .packed_accessor32<scalar_t, 2, torch::RestrictPtrTraits>(),
+              input.m_anneal_window
+                  .packed_accessor32<scalar_t, 1, torch::RestrictPtrTraits>(),
+              grad_sliced_values_monolithic
+                  .packed_accessor32<scalar_t, 3, torch::RestrictPtrTraits>(),
+              positions_grad
+                  .packed_accessor32<float, 2, torch::RestrictPtrTraits>(),
+              m_fixed_params.m_concat_points,
+              input.m_require_lattice_values_grad,
+              input.m_require_positions_grad);
+        }));
+  }
 
   lattice_values_monolithic_grad =
       lattice_values_monolithic_grad.permute({0, 2, 1});

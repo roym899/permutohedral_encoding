@@ -340,11 +340,6 @@ __global__ void __launch_bounds__(
 #pragma unroll
   for (int i = 0; i <= pos_dim; ++i) {
     scalar_t delta = (elevated[i] - rem0[i]) * factor;
-    // NOTE
-    //   1. the original implementation (below) is somehow significantly slower
-    //   for float16. Could not find an explanation why.
-    //   2. for original implementation float32 was faster than float16; with
-    //   this float16 is faster than float32.
     for (int j = 0; j <= pos_dim; ++j) {
       if (j != rank[i]) continue;
       barycentric[pos_dim - j] += delta;
@@ -375,7 +370,9 @@ __global__ void __launch_bounds__(
 
     /* TODO maybe can layout to use half2 here instead
      * for now just use float for atomicAdd
-     * see also https://github.com/NVlabs/tiny-cuda-nn/blob/28ca991f99b44d10387d73077c07ccfdd7f96275/include/tiny-cuda-nn/encodings/grid.h#L652-L665 */
+     * see also
+     * https://github.com/NVlabs/tiny-cuda-nn/blob/28ca991f99b44d10387d73077c07ccfdd7f96275/include/tiny-cuda-nn/encodings/grid.h#L652-L665
+     */
 
     atomicAdd(&lattice_values_monolithic_grad[level][0][idx_val],
               grad_sliced_val_cur[0] * w);
@@ -384,7 +381,7 @@ __global__ void __launch_bounds__(
   }
 }
 
-template <int pos_dim, int val_dim>
+template <int pos_dim, int val_dim, typename scalar_t>
 __global__ void __launch_bounds__(
     BLOCK_SIZE_BACK)  // since the block size is known at compile time we can
                       // specify it to the kernel and therefore cuda doesnt need
@@ -392,20 +389,24 @@ __global__ void __launch_bounds__(
                       // registry usage
     backward_gpu_only_pos(
         const int nr_positions, const int lattice_capacity,
-        const torch::PackedTensorAccessor32<float, 3, torch::RestrictPtrTraits>
+        const torch::PackedTensorAccessor32<scalar_t, 3,
+                                            torch::RestrictPtrTraits>
             lattice_values_monolithic,
-        const torch::PackedTensorAccessor32<float, 2, torch::RestrictPtrTraits>
+        const torch::PackedTensorAccessor32<scalar_t, 2,
+                                            torch::RestrictPtrTraits>
             positions,
-        const torch::PackedTensorAccessor32<float, 2, torch::RestrictPtrTraits>
+        const torch::PackedTensorAccessor32<scalar_t, 2,
+                                            torch::RestrictPtrTraits>
             scale_factor,
-        const torch::PackedTensorAccessor32<float, 2, torch::RestrictPtrTraits>
+        const torch::PackedTensorAccessor32<scalar_t, 2,
+                                            torch::RestrictPtrTraits>
             random_shift_monolithic,
-        const torch::PackedTensorAccessor32<float, 1, torch::RestrictPtrTraits>
+        const torch::PackedTensorAccessor32<scalar_t, 1,
+                                            torch::RestrictPtrTraits>
             anneal_window,
-        const torch::PackedTensorAccessor32<float, 3, torch::RestrictPtrTraits>
+        const torch::PackedTensorAccessor32<scalar_t, 3,
+                                            torch::RestrictPtrTraits>
             grad_sliced_values_monolithic,
-        torch::PackedTensorAccessor32<float, 3, torch::RestrictPtrTraits>
-            lattice_values_monolithic_grad,
         torch::PackedTensorAccessor32<float, 2, torch::RestrictPtrTraits>
             positions_grad,
         const bool concat_points, const bool require_lattice_values_grad,
@@ -414,71 +415,60 @@ __global__ void __launch_bounds__(
   // pass. it has size m_hash_table_capcity x (val_dim+1) grad_sliced_values is
   // the gradient of the loss with respect to the sliced out values which has
   // size nr_positions x val_dim
-  const int idx = blockIdx.x * blockDim.x +
-                  threadIdx.x;  // each thread will deal with one position
+  const int idx = blockIdx.x * blockDim.x + threadIdx.x;
   if (idx >= nr_positions) {
     return;
   }
 
-  const uint32_t level =
-      blockIdx.y;  // <- the level is the same for all threads
+  const uint32_t level = blockIdx.y;
 
-  // default
-  float2 grad_sliced_val_cur;
-  grad_sliced_val_cur.x = grad_sliced_values_monolithic[level][0][idx];
-  grad_sliced_val_cur.y = grad_sliced_values_monolithic[level][1][idx];
-
-  float pos[pos_dim];
+  scalar_t pos[pos_dim];
   for (int i = 0; i < pos_dim; i++) {
     pos[i] = positions[idx][i];
   }
 
-  float elevated[pos_dim + 1];
-  float sm = 0;
+  scalar_t elevated[pos_dim + 1];
+  scalar_t sm{};
 #pragma unroll
   for (int i = pos_dim; i > 0; i--) {
-    // float cf = (pos[i-1] +random_shift_constant[level*pos_dim + i-1]  ) *
-    // scale_factor_constant[level*pos_dim + i-1];
-    float cf = (pos[i - 1] + random_shift_monolithic[level][i - 1]) *
-               scale_factor[level][i - 1];
+    scalar_t cf = (pos[i - 1] + random_shift_monolithic[level][i - 1]) *
+                  scale_factor[level][i - 1];
     elevated[i] = sm - i * cf;
     sm += cf;
   }
   elevated[0] = sm;
 
   int rem0[pos_dim + 1];
-  int rank[pos_dim + 1]{0};
-
-  // Find the closest 0-colored simplex through rounding
-  // greedily search for the closest zero-colored lattice point
-  int sum = 0;
+  int sum{0};
+  scalar_t factor{scalar_t{1.0} / (pos_dim + 1)};
 #pragma unroll
-  for (int i = 0; i <= pos_dim; i++) {
-    float v = elevated[i] * (1.0f / (pos_dim + 1));
-    float up = ceil(v) * (pos_dim + 1);
-    float down = floor(v) * (pos_dim + 1);
-    if (up - elevated[i] < elevated[i] - down) {
+  for (int i = 0; i <= pos_dim; ++i) {
+    scalar_t v = elevated[i] * factor;
+    // find nearest multiples of (pos_dim + 1)
+    scalar_t up = ceil(v) * (pos_dim + 1);
+    scalar_t down = floor(v) * (pos_dim + 1);
+    if (up - elevated[i] < elevated[i] - down) {  // up is closer
       rem0[i] = (int)up;
-    } else {
+    } else {  // down is closer
       rem0[i] = (int)down;
     }
     sum += rem0[i];
   }
   sum /= pos_dim + 1;
 
-// Find the simplex we are in and store it in rank (where rank describes what
-// position coordinate i has in the sorted order of the features values)
+  int rank[pos_dim + 1]{0};
 #pragma unroll
-  for (int i = 0; i < pos_dim; i++) {
-    double di = elevated[i] - rem0[i];
-    for (int j = i + 1; j <= pos_dim; j++)
+  for (int i = 0; i < pos_dim; ++i) {
+    scalar_t di = elevated[i] - rem0[i];
+
+#pragma unroll
+    for (int j = i + 1; j <= pos_dim; ++j)
       if (di < elevated[j] - rem0[j])
-        rank[i]++;
+        ++rank[i];
       else
-        rank[j]++;
+        ++rank[j];
   }
 
-// If the point doesn't lie on the plane (sum != 0) bring it back
 #pragma unroll
   for (int i = 0; i <= pos_dim; i++) {
     rank[i] += sum;
@@ -491,132 +481,131 @@ __global__ void __launch_bounds__(
     }
   }
 
-  // float barycentric[pos_dim + 2]{0.0f};
-  // // Compute the barycentric coordinates (p.10 in [Adams et al. 2010])
-  // #pragma unroll
-  // for (int i = 0; i <= pos_dim; i++) {
-  //     float delta = (elevated[i] - rem0[i]) * (1.0f / (pos_dim + 1));
-  //     barycentric[pos_dim - rank[i]] += delta;
-  //     barycentric[pos_dim + 1 - rank[i]] -= delta;
-  // }
-  // // Wrap around
-  // barycentric[0] += 1.0f + barycentric[pos_dim + 1];
+  scalar_t barycentric[pos_dim + 2]{};
+#pragma unroll
+  for (int i = 0; i <= pos_dim; ++i) {
+    scalar_t delta = (elevated[i] - rem0[i]) * factor;
+    for (int j = 0; j <= pos_dim; ++j) {
+      if (j != rank[i]) continue;
+      barycentric[pos_dim - j] += delta;
+      barycentric[pos_dim + 1 - j] -= delta;
+    }
+  }
+  barycentric[0] += scalar_t{1.0} + barycentric[pos_dim + 1];
 
-  float w_lvl = anneal_window[level];
+  scalar_t grad_sliced_val_cur[] = {
+      grad_sliced_values_monolithic[level][0][idx],
+      grad_sliced_values_monolithic[level][1][idx]};
+
+  scalar_t w_lvl = anneal_window[level];
 
   int key[pos_dim];
 
-  if (require_positions_grad) {
-    // We have from upstrema grad the dL/dS which is the derivative of the loss
-    // wrt to the sliced value If we require positions grad we want to obtain
-    // dL/dPos dL/dPos = dL/dS *dS/dB * dB/dE * dE/dPos We need dS/dB which is
-    // the derivative of the sliced value wrt to the barycentric coords We need
-    // dB/dE which is the derivative of the barycentric wrt to the elevated
-    // value We need dE/dP which is the derivative of the elevated wrt to the
-    // position in xyz
-
-    // dL/dB  = dL/dS *dS/dB
-    // foward pass is just S=B0*WLvl*V0 + B1*WLvl*V1 etc
-    // so dS/dB0 is just W*V0
-    float dL_dbarycentric[pos_dim + 2]{0.0f};
-    for (int remainder = 0; remainder <= pos_dim; remainder++) {
+  // We have from upstrema grad the dL/dS which is the derivative of the loss
+  // wrt to the sliced value If we require positions grad we want to obtain
+  // dL/dPos dL/dPos = dL/dS *dS/dB * dB/dE * dE/dPos We need dS/dB which is
+  // the derivative of the sliced value wrt to the barycentric coords We need
+  // dB/dE which is the derivative of the barycentric wrt to the elevated
+  // value We need dE/dP which is the derivative of the elevated wrt to the
+  // position in xyz
+  // dL/dB  = dL/dS *dS/dB
+  // foward pass is just S=B0*WLvl*V0 + B1*WLvl*V1 etc
+  // so dS/dB0 is just W*V0
+  scalar_t dL_dbarycentric[pos_dim + 2]{};
+  for (int remainder = 0; remainder <= pos_dim; remainder++) {
 #pragma unroll
-      // Compute the location of the lattice point explicitly (all but
-      // the last coordinate - it's redundant because they sum to zero)
-      for (int i = 0; i < pos_dim; i++) {
-        key[i] = rem0[i] + remainder;
-        if (rank[i] > pos_dim - remainder) key[i] -= (pos_dim + 1);
-      }
-      // Retrieve pointer to the value at this vertex.
-      int idx_val = idx_hash_with_collision<pos_dim>(key, lattice_capacity);
-
-      // Load the value for this vertex
-      const float* fv = &lattice_values_monolithic[level][idx_val][0];
-      const float2 val_lattice_vertex = reinterpret_cast<const float2*>(fv)[0];
-      // add to the dL_d_barycentric
-      dL_dbarycentric[remainder] +=
-          val_lattice_vertex.x * w_lvl * grad_sliced_val_cur.x;
-      dL_dbarycentric[remainder] +=
-          val_lattice_vertex.y * w_lvl * grad_sliced_val_cur.y;
-    }
-
-    // dL/dE  = dL/dB *dB/dE
-    // In the forward pass of computing B from E there is this wraparound line
-    // of barycentric[0] += 1.0 + barycentric[pos_dim + 1];
-    // barycentric[0] = barycentric[0]+ 1.0 + barycentric[pos_dim + 1];
-    // I think this means that the gradient of also added to
-    // barycentric{pos_dim+1}
-    // TODO check for correctness here
-    dL_dbarycentric[pos_dim + 1] +=
-        dL_dbarycentric[0];  // order here is important btw, we first add B0 to
-                             // B5 and only afterwards we double B0
-    // dL_dbarycentric[0]=dL_dbarycentric[0]*2;
-    // Now we need to accumulate gradient into elevated from from each
-    // barycentric that the particlar elevated affected
-    float dL_delevated[pos_dim + 1]{0.0f};
-#pragma unroll
-    for (int i = 0; i <= pos_dim; i++) {
-      dL_delevated[i] +=
-          dL_dbarycentric[pos_dim - rank[i]] * (1.0f / (pos_dim + 1));
-      dL_delevated[i] -=
-          dL_dbarycentric[pos_dim + 1 - rank[i]] * (1.0f / (pos_dim + 1));
-    }
-
-    // dL/dPos = dL/dE * dE/dPos
-    float dL_dPos[pos_dim]{0.0f};
-    // I unrolles the loop that computes E from P and I got some local
-    // derivatives like dEx/dPx=Sx  dEx/dPy=Sy dEy/dPx=-Sx  dEy/dPy=Sy
-    // dEy/dPz=Sz dEz/dPy=-2Sy  dEz/dPz=Sz dEw/dPz=-3Sz So we just accumulate
-    // these values inot dL_dPos
-    // x
-    // dL_dPos[0]= dL_delevated[0]* scale_factor[level][0] +
-    //             dL_delevated[1]* (-scale_factor[level][0]);
-    // //y
-    // dL_dPos[1]= dL_delevated[0]* scale_factor[level][1] +
-    //             dL_delevated[1]* scale_factor[level][1] +
-    //             dL_delevated[2]* (-2*scale_factor[level][1]);
-    // //z
-    // dL_dPos[2]= dL_delevated[0]* scale_factor[level][2] +
-    //             dL_delevated[1]* scale_factor[level][2] +
-    //             dL_delevated[2]* scale_factor[level][2] +
-    //             dL_delevated[3]* (-3*scale_factor[level][2]);
-    // do it in a loop so as to support various pos_dims
+    // Compute the location of the lattice point explicitly (all but
+    // the last coordinate - it's redundant because they sum to zero)
     for (int i = 0; i < pos_dim; i++) {
-#pragma unroll
-      for (int j = 0; j <= i; j++) {
-        dL_dPos[i] += dL_delevated[j] * scale_factor[level][i];
-        // dL_dPos[i]+=dL_delevated[j]*scale_factor_constant[level*pos_dim + i];
-      }
+      key[i] = rem0[i] + remainder;
+      if (rank[i] > pos_dim - remainder) key[i] -= (pos_dim + 1);
     }
+    // Retrieve pointer to the value at this vertex.
+    int idx_val = idx_hash_with_collision<pos_dim>(key, lattice_capacity);
+
+    // Load the value for this vertex
+    const scalar_t* fv = &lattice_values_monolithic[level][idx_val][0];
+    // add to the dL_d_barycentric
+    dL_dbarycentric[remainder] += fv[0] * w_lvl * grad_sliced_val_cur[0];
+    dL_dbarycentric[remainder] += fv[1] * w_lvl * grad_sliced_val_cur[1];
+  }
+
+  // dL/dE  = dL/dB *dB/dE
+  // In the forward pass of computing B from E there is this wraparound line
+  // of barycentric[0] += 1.0 + barycentric[pos_dim + 1];
+  // barycentric[0] = barycentric[0]+ 1.0 + barycentric[pos_dim + 1];
+  // I think this means that the gradient of also added to
+  // barycentric{pos_dim+1}
+  // TODO check for correctness here
+  dL_dbarycentric[pos_dim + 1] +=
+      dL_dbarycentric[0];  // order here is important btw, we first add B0 to
+                           // B5 and only afterwards we double B0
+  // dL_dbarycentric[0]=dL_dbarycentric[0]*2;
+  // Now we need to accumulate gradient into elevated from from each
+  // barycentric that the particlar elevated affected
+  scalar_t dL_delevated[pos_dim + 1]{};
 #pragma unroll
-    for (int i = 0; i < pos_dim; i++) {
-      dL_dPos[i] -= dL_delevated[i + 1] * scale_factor[level][i] * (i + 1);
-      // dL_dPos[i]-=dL_delevated[i+1] * scale_factor_constant[level*pos_dim +
-      // i] * (i+1);
+  for (int i = 0; i <= pos_dim; i++) {
+    dL_delevated[i] +=
+        dL_dbarycentric[pos_dim - rank[i]] * (1.0f / (pos_dim + 1));
+    dL_delevated[i] -=
+        dL_dbarycentric[pos_dim + 1 - rank[i]] * (1.0f / (pos_dim + 1));
+  }
+
+  // dL/dPos = dL/dE * dE/dPos
+  scalar_t dL_dPos[pos_dim]{};
+  // I unrolles the loop that computes E from P and I got some local
+  // derivatives like dEx/dPx=Sx  dEx/dPy=Sy dEy/dPx=-Sx  dEy/dPy=Sy
+  // dEy/dPz=Sz dEz/dPy=-2Sy  dEz/dPz=Sz dEw/dPz=-3Sz So we just accumulate
+  // these values inot dL_dPos
+  // x
+  // dL_dPos[0]= dL_delevated[0]* scale_factor[level][0] +
+  //             dL_delevated[1]* (-scale_factor[level][0]);
+  // //y
+  // dL_dPos[1]= dL_delevated[0]* scale_factor[level][1] +
+  //             dL_delevated[1]* scale_factor[level][1] +
+  //             dL_delevated[2]* (-2*scale_factor[level][1]);
+  // //z
+  // dL_dPos[2]= dL_delevated[0]* scale_factor[level][2] +
+  //             dL_delevated[1]* scale_factor[level][2] +
+  //             dL_delevated[2]* scale_factor[level][2] +
+  //             dL_delevated[3]* (-3*scale_factor[level][2]);
+  // do it in a loop so as to support various pos_dims
+  for (int i = 0; i < pos_dim; i++) {
+#pragma unroll
+    for (int j = 0; j <= i; j++) {
+      dL_dPos[i] += dL_delevated[j] * scale_factor[level][i];
+      // dL_dPos[i]+=dL_delevated[j]*scale_factor_constant[level*pos_dim + i];
     }
+  }
+#pragma unroll
+  for (int i = 0; i < pos_dim; i++) {
+    dL_dPos[i] -= dL_delevated[i + 1] * scale_factor[level][i] * (i + 1);
+    // dL_dPos[i]-=dL_delevated[i+1] * scale_factor_constant[level*pos_dim +
+    // i] * (i+1);
+  }
 // finish
 // atomicAdd(&positions_grad[idx][0], dL_dPos[0]  );
 // atomicAdd(&positions_grad[idx][1], dL_dPos[1]  );
 // atomicAdd(&positions_grad[idx][2], dL_dPos[2]  );
 #pragma unroll
-    for (int i = 0; i < pos_dim; i++) {
-      // atomicAdd(&positions_grad[idx][i], dL_dPos[i]  );
-      atomicAdd(&positions_grad[i][idx], dL_dPos[i]);
-    }
-    // Cannot be done like this because the sums into the positions grad may
-    // come from multiple levels so they need to be atomic
-    // positions_grad[idx][0]=dL_dPos[0];
-    // positions_grad[idx][1]=dL_dPos[1];
-    // positions_grad[idx][2]=dL_dPos[2];
-
-    // positions_grad[level][idx][0]=dL_dPos[0];
-    // positions_grad[level][idx][1]=dL_dPos[1];
-    // positions_grad[level][idx][2]=dL_dPos[2];
-    // #pragma unroll
-    // for(int i=0; i<pos_dim; i++){
-    //     positions_grad[level][idx][i]=dL_dPos[i];
-    // }
+  for (int i = 0; i < pos_dim; i++) {
+    // atomicAdd(&positions_grad[idx][i], dL_dPos[i]  );
+    atomicAdd(&positions_grad[i][idx], dL_dPos[i]);
   }
+  // Cannot be done like this because the sums into the positions grad may
+  // come from multiple levels so they need to be atomic
+  // positions_grad[idx][0]=dL_dPos[0];
+  // positions_grad[idx][1]=dL_dPos[1];
+  // positions_grad[idx][2]=dL_dPos[2];
+
+  // positions_grad[level][idx][0]=dL_dPos[0];
+  // positions_grad[level][idx][1]=dL_dPos[1];
+  // positions_grad[level][idx][2]=dL_dPos[2];
+  // #pragma unroll
+  // for(int i=0; i<pos_dim; i++){
+  //     positions_grad[level][idx][i]=dL_dPos[i];
+  // }
 }
 
 // double back
