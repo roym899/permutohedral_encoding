@@ -75,8 +75,7 @@ scale_list = np.geomspace(coarsest_scale, finest_scale, num=nr_levels)
 dtypes = (torch.float16, torch.float32, torch.float64)
 # dtypes = (torch.float32,)
 # funcs = (mm_f, enc_f, enc_fnb_allgrads, enc_fnb_latgrads)
-# funcs = (ind_add, enc_f, enc_fnb_all, enc_fnb_lat)
-funcs = (enc_fnb_lat, enc_fnb_all)
+funcs = (enc_f, enc_fnb_all, enc_fnb_lat)
 
 encoding = {
     dtype: permutohedral_encoding.PermutoEncoding(
