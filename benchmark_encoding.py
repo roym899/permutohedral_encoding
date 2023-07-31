@@ -64,36 +64,41 @@ def benchmark(f, name, trials, skip_first_n=3, **kwargs):
     return avg
 
 
-# create encoding
-pos_dim = 3
-capacity = pow(2, 12)
-nr_levels = 24
-nr_feat_per_level = 2
-coarsest_scale = 0.1
-finest_scale = 0.001
-scale_list = np.geomspace(coarsest_scale, finest_scale, num=nr_levels)
-dtypes = (torch.float16, torch.float32, torch.float64)
-# dtypes = (torch.float32,)
-# funcs = (mm_f, enc_f, enc_fnb_allgrads, enc_fnb_latgrads)
-funcs = (enc_f, enc_fnb_all, enc_fnb_lat)
+if __name__ == "__main__":
+    # create encoding
+    pos_dim = 3
+    capacity = pow(2, 12)
+    nr_levels = 24
+    nr_feat_per_level = 2
+    coarsest_scale = 0.1
+    finest_scale = 0.001
+    scale_list = np.geomspace(coarsest_scale, finest_scale, num=nr_levels)
+    dtypes = (torch.float16, torch.float32, torch.float64)
+    # dtypes = (torch.float32,)
+    # funcs = (mm_f, enc_f, enc_fnb_allgrads, enc_fnb_latgrads)
+    funcs = (enc_f, enc_fnb_all, enc_fnb_lat)
 
-encoding = {
-    dtype: permutohedral_encoding.PermutoEncoding(
-        pos_dim, capacity, nr_levels, nr_feat_per_level, scale_list, dtype=dtype
-    )
-    for dtype in dtypes
-}
+    encoding = {
+        dtype: permutohedral_encoding.PermutoEncoding(
+            pos_dim, capacity, nr_levels, nr_feat_per_level, scale_list, dtype=dtype
+        )
+        for dtype in dtypes
+    }
 
-num_points = 10000000
-points = {
-    dtype: torch.rand(num_points, pos_dim, dtype=dtype, device="cuda")
-    for dtype in dtypes
-}
+    num_points = 1000000
+    points = {
+        dtype: torch.rand(num_points, pos_dim, dtype=dtype, device="cuda")
+        for dtype in dtypes
+    }
 
-matrix = {dtype: torch.rand(5000, 5000, dtype=dtype, device="cuda") for dtype in dtypes}
-acc = {dtype: torch.zeros(num_points, dtype=dtype, device="cuda") for dtype in dtypes}
-ind = torch.randint(num_points, size=(3 * num_points,), device="cuda")
+    matrix = {
+        dtype: torch.rand(5000, 5000, dtype=dtype, device="cuda") for dtype in dtypes
+    }
+    acc = {
+        dtype: torch.zeros(num_points, dtype=dtype, device="cuda") for dtype in dtypes
+    }
+    ind = torch.randint(num_points, size=(3 * num_points,), device="cuda")
 
-for func in funcs:
-    for dtype in dtypes:
-        benchmark(lambda: func(dtype), f"{dtype} {func.__name__}", 10)
+    for func in funcs:
+        for dtype in dtypes:
+            benchmark(lambda: func(dtype), f"{dtype} {func.__name__}", 10)
