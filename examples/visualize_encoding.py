@@ -50,7 +50,7 @@ for i, dtype in enumerate([torch.float16, torch.float16, torch.float32, torch.fl
     start_time = time.time()
     for iteration in range(3000):
         points = torch.rand(nr_points, 2, device="cuda", dtype=dtype)
-        target_indices = (points * resize_factor).long()
+        target_indices = (points * resize_factor).long().clamp_max(99)
         targets = image[target_indices[:, 0], target_indices[:, 1]]
         predictions = network(points)
         loss = ((targets - predictions).abs()).mean()
