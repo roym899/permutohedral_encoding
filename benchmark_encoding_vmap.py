@@ -67,9 +67,8 @@ def for_loop(dtype, set_to_none) -> None:
 
 
 def vmap(dtype, set_to_none) -> None:
-    global params, buffers
-    ins = queries.view(num_mlps, -1, 3)
-    outs = torch.vmap(wrapper)(params, buffers, ins)
+    ins = queries[dtype].view(num_mlps, -1, 3)
+    outs = torch.vmap(wrapper)(params[dtype], buffers[dtype], ins)
     if with_grads:
         loss = outs.flatten().sum()
         loss.backward()
@@ -96,7 +95,7 @@ if __name__ == "__main__":
     with_grads = True
     set_to_none = True
     dtypes = (torch.float16, torch.float32, torch.float64)
-    funcs = [single_model, for_loop]
+    funcs = [single_model, for_loop, vmap]
 
     # init nets and prepare data
     scale_list = np.geomspace(coarsest_scale, finest_scale, num=nr_levels)

@@ -34,6 +34,7 @@ class PermutoEncodingFunc(torch.autograd.Function):
         return sliced_values
 
     @staticmethod
+    @torch.autograd.function.once_differentiable
     def backward(ctx, grad_sliced_values_monolithic):
         # restore from ctx
         lattice = ctx.lattice
@@ -49,6 +50,19 @@ class PermutoEncodingFunc(torch.autograd.Function):
             "the model.train(), set torch.set_grad_enabled(True) and make "
             "lattice_values have required_grad=True"
         )
+
+        # for now do not support double backward
+        grad_sliced_values_monolithic = grad_sliced_values_monolithic.contiguous()
+
+        ctx.save_for_backward(grad_sliced_values_monolithic)
+        ctx.lattice = lattice
+        ctx.input_struct = input_struct
+
+        lattice_values_grad, positions_grad = lattice.backward(
+            input_struct, grad_sliced_values_monolithic
+        )
+
+        return None, lattice_values_grad, positions_grad, None, None, None
 
         # NOTE we pass the tensors of lattice_values and positiosn explicitly and not
         #  throught the input struct so that we can compute gradients from them for the
