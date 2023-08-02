@@ -139,7 +139,7 @@ __global__ void __launch_bounds__(
   // Find the simplex we are in and store it in rank (where rank describes what
   // position coordinate i has in the sorted order of the features values)
   // Conway et al., 1998 p. 447-448 (Algorithm 3, Step 3)
-  int rank[pos_dim + 1]{0};
+  int rank[pos_dim + 1]{};
 #pragma unroll
   for (int i = 0; i < pos_dim; ++i) {
     scalar_t di = elevated[i] - rem0[i];
@@ -183,7 +183,7 @@ __global__ void __launch_bounds__(
       barycentric[pos_dim + 1 - j] -= delta;
     }
   }
-  barycentric[0] += scalar_t{1.0} + barycentric[pos_dim + 1];
+  barycentric[0] += scalar_t{1} + barycentric[pos_dim + 1];
 
   /* // Original Implementation */
   /* scalar_t barycentric[pos_dim + 2]{}; */
@@ -311,7 +311,7 @@ __global__ void __launch_bounds__(
   }
   sum /= pos_dim + 1;
 
-  int rank[pos_dim + 1]{0};
+  int rank[pos_dim + 1]{};
 #pragma unroll
   for (int i = 0; i < pos_dim; ++i) {
     scalar_t di = elevated[i] - rem0[i];
@@ -456,7 +456,7 @@ __global__ void __launch_bounds__(
   }
   sum /= pos_dim + 1;
 
-  int rank[pos_dim + 1]{0};
+  int rank[pos_dim + 1]{};
 #pragma unroll
   for (int i = 0; i < pos_dim; ++i) {
     scalar_t di = elevated[i] - rem0[i];
@@ -678,7 +678,7 @@ __global__ void __launch_bounds__(
   elevated[0] = sm;
 
   int rem0[pos_dim + 1];
-  int rank[pos_dim + 1]{0};
+  int rank[pos_dim + 1]{};
 
   // Find the closest 0-colored simplex through rounding
   // greedily search for the closest zero-colored lattice point
@@ -930,7 +930,7 @@ __global__ void __launch_bounds__(
   elevated[0] = sm;
 
   int rem0[pos_dim + 1];
-  int rank[pos_dim + 1]{0};
+  int rank[pos_dim + 1]{};
 
   // Find the closest 0-colored simplex through rounding
   // greedily search for the closest zero-colored lattice point
@@ -1190,7 +1190,7 @@ __global__ void __launch_bounds__(
   elevated[0] = sm;
 
   int rem0[pos_dim + 1];
-  int rank[pos_dim + 1]{0};
+  int rank[pos_dim + 1]{};
 
   // Find the closest 0-colored simplex through rounding
   // greedily search for the closest zero-colored lattice point
