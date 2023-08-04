@@ -89,15 +89,14 @@ if __name__ == "__main__":
     finest_scale = 0.001
     dim_out = 2
     num_rays_per_mlp = 10
-    num_samples_per_ray = 64
+    num_samples_per_ray = 128
     num_trials = 20
-    num_mlps = 1000
+    num_mlps = 100
     num_queries = num_mlps * num_samples_per_ray * num_rays_per_mlp
     encoding = True
-    with_grads = False
+    with_grads = True
     set_to_none = True
     dtypes = (torch.float16, torch.float32, torch.float64)
-    dtypes = (torch.float32,)
     funcs = [single_model, for_loop, vmap]
 
     # init nets and prepare data

@@ -58,7 +58,7 @@ __global__ void __launch_bounds__(
         const bool concat_points, const scalar_t points_scaling,
         const bool require_lattice_values_grad,
         const bool require_positions_grad) {
-  int batch_idx = blockIdx.z;
+  const int batch_idx = blockIdx.z;
   int idx = blockIdx.x * blockDim.x +
             threadIdx.x;  // each thread will deal with a new value
 
@@ -219,9 +219,6 @@ __global__ void __launch_bounds__(
     // weight (accumulates also the homogeneous coordinate)
     scalar_t w = barycentric[remainder] * w_lvl;
 
-    // TODO idx_val and w is the only thing required for backward_gpu (store
-    //   these?)
-
     val_hom_vec[0] =
         val_hom_vec[0] +
         lattice_values_monolithic[batch_idx][level][idx_val][0] * w;
@@ -242,10 +239,10 @@ __global__ void __launch_bounds__(
                       // registry usage
     backward_gpu(
         const int nr_positions, const int lattice_capacity,
-        const torch::PackedTensorAccessor32<scalar_t, 3,
+        const torch::PackedTensorAccessor32<scalar_t, 4,
                                             torch::RestrictPtrTraits>
             lattice_values_monolithic,
-        const torch::PackedTensorAccessor32<scalar_t, 2,
+        const torch::PackedTensorAccessor32<scalar_t, 3,
                                             torch::RestrictPtrTraits>
             positions,
         const torch::PackedTensorAccessor32<scalar_t, 2,
@@ -257,10 +254,10 @@ __global__ void __launch_bounds__(
         const torch::PackedTensorAccessor32<scalar_t, 1,
                                             torch::RestrictPtrTraits>
             anneal_window,
-        const torch::PackedTensorAccessor32<scalar_t, 3,
+        const torch::PackedTensorAccessor32<scalar_t, 4,
                                             torch::RestrictPtrTraits>
             grad_sliced_values_monolithic,
-        torch::PackedTensorAccessor32<float, 3, torch::RestrictPtrTraits>
+        torch::PackedTensorAccessor32<float, 4, torch::RestrictPtrTraits>
             lattice_values_monolithic_grad,
         const bool concat_points) {
   // lattice_values_monolithic refers to the values that the lattice had in the
@@ -270,6 +267,7 @@ __global__ void __launch_bounds__(
 
   // code should be the same as forward (without concatenating positions in the
   // beginning) until last loop
+  const int batch_idx = blockIdx.z;
   const int idx = blockIdx.x * blockDim.x + threadIdx.x;
   if (idx >= nr_positions) {
     return;
@@ -279,7 +277,7 @@ __global__ void __launch_bounds__(
 
   scalar_t pos[pos_dim];
   for (int i = 0; i < pos_dim; i++) {
-    pos[i] = positions[idx][i];
+    pos[i] = positions[batch_idx][idx][i];
   }
 
   scalar_t elevated[pos_dim + 1];
@@ -349,8 +347,8 @@ __global__ void __launch_bounds__(
   barycentric[0] += scalar_t{1.0} + barycentric[pos_dim + 1];
 
   scalar_t grad_sliced_val_cur[] = {
-      grad_sliced_values_monolithic[level][0][idx],
-      grad_sliced_values_monolithic[level][1][idx]};
+      grad_sliced_values_monolithic[batch_idx][level][0][idx],
+      grad_sliced_values_monolithic[batch_idx][level][1][idx]};
 
   scalar_t w_lvl = anneal_window[level];
 
@@ -368,15 +366,15 @@ __global__ void __launch_bounds__(
 
     scalar_t w = barycentric[remainder] * w_lvl;
 
-    /* TODO maybe can layout to use half2 here instead
+    /* TODO maybe can change layout to use half2 here instead
      * for now just use float for atomicAdd
      * see also
      * https://github.com/NVlabs/tiny-cuda-nn/blob/28ca991f99b44d10387d73077c07ccfdd7f96275/include/tiny-cuda-nn/encodings/grid.h#L652-L665
      */
 
-    atomicAdd(&lattice_values_monolithic_grad[level][0][idx_val],
+    atomicAdd(&lattice_values_monolithic_grad[batch_idx][level][0][idx_val],
               grad_sliced_val_cur[0] * w);
-    atomicAdd(&lattice_values_monolithic_grad[level][1][idx_val],
+    atomicAdd(&lattice_values_monolithic_grad[batch_idx][level][1][idx_val],
               grad_sliced_val_cur[1] * w);
   }
 }
@@ -389,10 +387,10 @@ __global__ void __launch_bounds__(
                       // registry usage
     backward_gpu_only_pos(
         const int nr_positions, const int lattice_capacity,
-        const torch::PackedTensorAccessor32<scalar_t, 3,
+        const torch::PackedTensorAccessor32<scalar_t, 4,
                                             torch::RestrictPtrTraits>
             lattice_values_monolithic,
-        const torch::PackedTensorAccessor32<scalar_t, 2,
+        const torch::PackedTensorAccessor32<scalar_t, 3,
                                             torch::RestrictPtrTraits>
             positions,
         const torch::PackedTensorAccessor32<scalar_t, 2,
@@ -404,10 +402,10 @@ __global__ void __launch_bounds__(
         const torch::PackedTensorAccessor32<scalar_t, 1,
                                             torch::RestrictPtrTraits>
             anneal_window,
-        const torch::PackedTensorAccessor32<scalar_t, 3,
+        const torch::PackedTensorAccessor32<scalar_t, 4,
                                             torch::RestrictPtrTraits>
             grad_sliced_values_monolithic,
-        torch::PackedTensorAccessor32<float, 2, torch::RestrictPtrTraits>
+        torch::PackedTensorAccessor32<float, 3, torch::RestrictPtrTraits>
             positions_grad,
         const bool concat_points, const bool require_lattice_values_grad,
         const bool require_positions_grad) {
@@ -415,6 +413,7 @@ __global__ void __launch_bounds__(
   // pass. it has size m_hash_table_capcity x (val_dim+1) grad_sliced_values is
   // the gradient of the loss with respect to the sliced out values which has
   // size nr_positions x val_dim
+  const int batch_idx = blockIdx.z;
   const int idx = blockIdx.x * blockDim.x + threadIdx.x;
   if (idx >= nr_positions) {
     return;
@@ -424,7 +423,7 @@ __global__ void __launch_bounds__(
 
   scalar_t pos[pos_dim];
   for (int i = 0; i < pos_dim; i++) {
-    pos[i] = positions[idx][i];
+    pos[i] = positions[batch_idx][idx][i];
   }
 
   scalar_t elevated[pos_dim + 1];
@@ -494,8 +493,8 @@ __global__ void __launch_bounds__(
   barycentric[0] += scalar_t{1.0} + barycentric[pos_dim + 1];
 
   scalar_t grad_sliced_val_cur[] = {
-      grad_sliced_values_monolithic[level][0][idx],
-      grad_sliced_values_monolithic[level][1][idx]};
+      grad_sliced_values_monolithic[batch_idx][level][0][idx],
+      grad_sliced_values_monolithic[batch_idx][level][1][idx]};
 
   scalar_t w_lvl = anneal_window[level];
 
@@ -524,7 +523,7 @@ __global__ void __launch_bounds__(
     int idx_val = idx_hash_with_collision<pos_dim>(key, lattice_capacity);
 
     // Load the value for this vertex
-    const scalar_t* fv = &lattice_values_monolithic[level][idx_val][0];
+    const scalar_t* fv = &lattice_values_monolithic[batch_idx][level][idx_val][0];
     // add to the dL_d_barycentric
     dL_dbarycentric[remainder] += fv[0] * w_lvl * grad_sliced_val_cur[0];
     dL_dbarycentric[remainder] += fv[1] * w_lvl * grad_sliced_val_cur[1];
@@ -591,7 +590,7 @@ __global__ void __launch_bounds__(
 #pragma unroll
   for (int i = 0; i < pos_dim; i++) {
     // atomicAdd(&positions_grad[idx][i], dL_dPos[i]  );
-    atomicAdd(&positions_grad[i][idx], dL_dPos[i]);
+    atomicAdd(&positions_grad[batch_idx][i][idx], dL_dPos[i]);
   }
   // Cannot be done like this because the sums into the positions grad may
   // come from multiple levels so they need to be atomic

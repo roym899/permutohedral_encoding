@@ -40,38 +40,38 @@ def test_forward() -> None:
     assert torch.allclose(out_features, correct_out_features)
 
 
-# def test_lattice_grad() -> None:
-#     """Test lattice gradients."""
-#     test_files_dir = pathlib.Path(__file__).parents[0] / "test_files"
-#     state_dict = torch.load(test_files_dir / "encoding_state_dict.pt")
-#     in_points = torch.load(test_files_dir / "in_points.pt")
-#     correct_lattice_grad = torch.load(test_files_dir / "encoding_lattice_grad.pt")
+def test_lattice_grad() -> None:
+    """Test lattice gradients."""
+    test_files_dir = pathlib.Path(__file__).parents[0] / "test_files"
+    state_dict = torch.load(test_files_dir / "encoding_state_dict.pt")
+    in_points = torch.load(test_files_dir / "in_points.pt")
+    correct_lattice_grad = torch.load(test_files_dir / "encoding_lattice_grad.pt")
 
-#     encoding = create_encoding()
-#     encoding.load_state_dict(state_dict)
-#     out_features = encoding(in_points)
-#     loss = out_features.sum()
-#     loss.backward()
-#     assert torch.allclose(
-#         encoding.lattice_values.grad, correct_lattice_grad
-#     )
+    encoding = create_encoding()
+    encoding.load_state_dict(state_dict)
+    out_features = encoding(in_points)
+    loss = out_features.sum()
+    loss.backward()
+    assert torch.allclose(
+        encoding.lattice_values.grad, correct_lattice_grad
+    )
 
 
-# def test_in_points_grad() -> None:
-#     """Test input gradients."""
-#     test_files_dir = pathlib.Path(__file__).parents[0] / "test_files"
-#     state_dict = torch.load(test_files_dir / "encoding_state_dict.pt")
-#     in_points = torch.load(test_files_dir / "in_points.pt")
-#     correct_in_points_grad = torch.load(test_files_dir / "in_points_grad.pt")
+def test_in_points_grad() -> None:
+    """Test input gradients."""
+    test_files_dir = pathlib.Path(__file__).parents[0] / "test_files"
+    state_dict = torch.load(test_files_dir / "encoding_state_dict.pt")
+    in_points = torch.load(test_files_dir / "in_points.pt")
+    correct_in_points_grad = torch.load(test_files_dir / "in_points_grad.pt")
 
-#     in_points.requires_grad = True
-#     encoding = create_encoding()
-#     encoding.load_state_dict(state_dict)
-#     out_features = encoding(in_points)
-#     loss = out_features.sum()
-#     loss.backward()
+    in_points.requires_grad = True
+    encoding = create_encoding()
+    encoding.load_state_dict(state_dict)
+    out_features = encoding(in_points)
+    loss = out_features.sum()
+    loss.backward()
 
-#     assert torch.allclose(in_points.grad, correct_in_points_grad)
+    assert torch.allclose(in_points.grad, correct_in_points_grad)
 
 
 if __name__ == "__main__":

@@ -45,14 +45,14 @@ template <uint32_t POS_DIM, uint32_t NR_FEAT_PER_LEVEL>
 torch::Tensor Encoding<POS_DIM, NR_FEAT_PER_LEVEL>::forward(
     const EncodingInput& input) {
   check_positions(input.m_positions_raw);
-  int batch_size_pos = input.m_positions_raw.size(0);
-  int nr_positions = input.m_positions_raw.size(1);
-  int pos_dim = input.m_positions_raw.size(2);
+  const int batch_size_pos = input.m_positions_raw.size(0);
+  const int nr_positions = input.m_positions_raw.size(1);
+  const int pos_dim = input.m_positions_raw.size(2);
 
-  int batch_size_lattice = input.m_lattice_values.size(0);
+  const int batch_size_lattice = input.m_lattice_values.size(0);
   int nr_resolutions = input.m_lattice_values.size(1);
-  int lattice_capacity = input.m_lattice_values.size(2);
-  int val_dim = input.m_lattice_values.size(3);
+  const int lattice_capacity = input.m_lattice_values.size(2);
+  const int val_dim = input.m_lattice_values.size(3);
 
   CHECK(batch_size_pos == batch_size_lattice)
       << "Batch size of positions and lattice must be the same.";
@@ -75,17 +75,19 @@ torch::Tensor Encoding<POS_DIM, NR_FEAT_PER_LEVEL>::forward(
   }
 
   // initialize the output values
-  Tensor sliced_values_hom_tensor = torch::empty(
-      {batch_size_pos, nr_resolutions + nr_resolutions_extra, val_dim, nr_positions},
-      torch::dtype(input.m_lattice_values.scalar_type())
-          .device(torch::kCUDA, 0));
+  Tensor sliced_values_hom_tensor =
+      torch::empty({batch_size_pos, nr_resolutions + nr_resolutions_extra,
+                    val_dim, nr_positions},
+                   torch::dtype(input.m_lattice_values.scalar_type())
+                       .device(torch::kCUDA, 0));
 
   // try again with a monolithic kernel
   const dim3 blocks = {
       (unsigned int)div_round_up(nr_positions, BLOCK_SIZE),
       (unsigned int)(nr_resolutions + nr_resolutions_extra),
-      (unsigned int)batch_size_pos};  // the blocks are executed in order, first the blocks for the first
-           // resolution, then the second and so on
+      (unsigned int)batch_size_pos};  // the blocks are executed in order, first
+                                      // the blocks for the first resolution,
+                                      // then the second and so on
 
   AT_DISPATCH_FLOATING_TYPES_AND_HALF(
       input.m_lattice_values.scalar_type(), "forward_gpu", ([&] {
@@ -118,24 +120,29 @@ std::tuple<torch::Tensor, torch::Tensor>
 Encoding<POS_DIM, NR_FEAT_PER_LEVEL>::backward(
     const EncodingInput& input, torch::Tensor& grad_sliced_values_monolithic) {
   check_positions(input.m_positions_raw);
-  int nr_positions = input.m_positions_raw.size(0);
-  int pos_dim = input.m_positions_raw.size(1);
-  int capacity = input.m_lattice_values.size(1);
-  CHECK(grad_sliced_values_monolithic.dim() == 3)
-      << "grad_sliced_values_monolithic should be nr_resolutions x val_dim x "
-         "nr_positions, so it should have 3 dimensions. However it has "
+  const int batch_size_pos = input.m_positions_raw.size(0);
+  const int nr_positions = input.m_positions_raw.size(1);
+  const int pos_dim = input.m_positions_raw.size(2);
+
+  const int lattice_capacity = input.m_lattice_values.size(2);
+  CHECK(grad_sliced_values_monolithic.dim() == 4)
+      << "grad_sliced_values_monolithic should be batch_size x nr_resolutions "
+         "x val_dim x nr_positions, so it should have 3 dimensions. However it "
+         "has "
       << grad_sliced_values_monolithic.dim();
   CHECK(grad_sliced_values_monolithic.is_contiguous())
       << "Grad sliced values needs to be contiguous. Please call .contiguous() "
          "on it";
-  int nr_resolutions = grad_sliced_values_monolithic.size(0);
-  int val_dim = grad_sliced_values_monolithic.size(1);
-  CHECK(nr_positions == grad_sliced_values_monolithic.size(2))
+
+  int nr_resolutions = grad_sliced_values_monolithic.size(1);
+  const int val_dim = grad_sliced_values_monolithic.size(2);
+  CHECK(nr_positions == grad_sliced_values_monolithic.size(3))
       << "The nr of positions should match between the input positions and the "
          "sliced values";
-  CHECK(input.m_lattice_values.dim() == 3)
-      << "grad_sliced_values_monolithic should be nr_resolutions x val_dim x "
-         "nr_positions, so it should have 3 dimensions. However it has "
+  CHECK(input.m_lattice_values.dim() == 4)
+      << "grad_sliced_values_monolithic should be batch_size x nr_resolutions "
+         "x val_dim x nr_positions, so it should have 3 dimensions. However it "
+         "has "
       << input.m_lattice_values.dim();
   CHECK(input.m_lattice_values.is_contiguous())
       << "We assume that the lattice_values_monolithic are contiguous because "
@@ -153,27 +160,27 @@ Encoding<POS_DIM, NR_FEAT_PER_LEVEL>::backward(
   Tensor lattice_values_monolithic_grad;  // dL/dLatticeValues
   if (input.m_require_lattice_values_grad) {
     lattice_values_monolithic_grad =
-        torch::zeros({nr_resolutions, val_dim, capacity},
+        torch::zeros({batch_size_pos, nr_resolutions, val_dim, lattice_capacity},
                      torch::dtype(torch::kFloat32).device(torch::kCUDA, 0));
   } else {
     lattice_values_monolithic_grad = torch::empty(
-        {1, 1, 1}, torch::dtype(torch::kFloat32).device(torch::kCUDA, 0));
+        {1, 1, 1, 1}, torch::dtype(torch::kFloat32).device(torch::kCUDA, 0));
   }
 
   Tensor positions_grad;  // dL/dPos
   if (input.m_require_positions_grad) {
     positions_grad =
-        torch::zeros({pos_dim, nr_positions},
+        torch::zeros({batch_size_pos, pos_dim, nr_positions},
                      torch::dtype(torch::kFloat32).device(torch::kCUDA, 0));
   } else {
     positions_grad = torch::empty(
-        {1, 1}, torch::dtype(torch::kFloat32).device(torch::kCUDA, 0));
+        {1, 1, 1}, torch::dtype(torch::kFloat32).device(torch::kCUDA, 0));
   }
 
   const dim3 blocks = {
       (unsigned int)div_round_up(nr_positions, BLOCK_SIZE_BACK),
       (unsigned int)nr_resolutions,
-      1};  // the blocks are executed in order, first the blocks for the first
+      (unsigned int)batch_size_pos};  // the blocks are executed in order, first the blocks for the first
            // resolution, then the second and so on
 
   if (input.m_require_lattice_values_grad) {
@@ -181,11 +188,11 @@ Encoding<POS_DIM, NR_FEAT_PER_LEVEL>::backward(
         input.m_lattice_values.scalar_type(), "backward_gpu", ([&] {
           backward_gpu<POS_DIM, NR_FEAT_PER_LEVEL, scalar_t><<<
               blocks, BLOCK_SIZE_BACK, 0, at::cuda::getCurrentCUDAStream()>>>(
-              nr_positions, capacity,
+              nr_positions, lattice_capacity,
               input.m_lattice_values
-                  .packed_accessor32<scalar_t, 3, torch::RestrictPtrTraits>(),
+                  .packed_accessor32<scalar_t, 4, torch::RestrictPtrTraits>(),
               input.m_positions_raw
-                  .packed_accessor32<scalar_t, 2, torch::RestrictPtrTraits>(),
+                  .packed_accessor32<scalar_t, 3, torch::RestrictPtrTraits>(),
               m_fixed_params.m_scale_factor
                   .packed_accessor32<scalar_t, 2, torch::RestrictPtrTraits>(),
               m_fixed_params.m_random_shift_per_level
@@ -193,9 +200,9 @@ Encoding<POS_DIM, NR_FEAT_PER_LEVEL>::backward(
               input.m_anneal_window
                   .packed_accessor32<scalar_t, 1, torch::RestrictPtrTraits>(),
               grad_sliced_values_monolithic
-                  .packed_accessor32<scalar_t, 3, torch::RestrictPtrTraits>(),
+                  .packed_accessor32<scalar_t, 4, torch::RestrictPtrTraits>(),
               lattice_values_monolithic_grad
-                  .packed_accessor32<float, 3, torch::RestrictPtrTraits>(),
+                  .packed_accessor32<float, 4, torch::RestrictPtrTraits>(),
               m_fixed_params.m_concat_points);
         }));
   }
@@ -205,11 +212,11 @@ Encoding<POS_DIM, NR_FEAT_PER_LEVEL>::backward(
         input.m_lattice_values.scalar_type(), "backward_gpu_only_pos", ([&] {
           backward_gpu_only_pos<POS_DIM, NR_FEAT_PER_LEVEL><<<
               blocks, BLOCK_SIZE_BACK, 0, at::cuda::getCurrentCUDAStream()>>>(
-              nr_positions, capacity,
+              nr_positions, lattice_capacity,
               input.m_lattice_values
-                  .packed_accessor32<scalar_t, 3, torch::RestrictPtrTraits>(),
+                  .packed_accessor32<scalar_t, 4, torch::RestrictPtrTraits>(),
               input.m_positions_raw
-                  .packed_accessor32<scalar_t, 2, torch::RestrictPtrTraits>(),
+                  .packed_accessor32<scalar_t, 3, torch::RestrictPtrTraits>(),
               m_fixed_params.m_scale_factor
                   .packed_accessor32<scalar_t, 2, torch::RestrictPtrTraits>(),
               m_fixed_params.m_random_shift_per_level
@@ -217,9 +224,9 @@ Encoding<POS_DIM, NR_FEAT_PER_LEVEL>::backward(
               input.m_anneal_window
                   .packed_accessor32<scalar_t, 1, torch::RestrictPtrTraits>(),
               grad_sliced_values_monolithic
-                  .packed_accessor32<scalar_t, 3, torch::RestrictPtrTraits>(),
+                  .packed_accessor32<scalar_t, 4, torch::RestrictPtrTraits>(),
               positions_grad
-                  .packed_accessor32<float, 2, torch::RestrictPtrTraits>(),
+                  .packed_accessor32<float, 3, torch::RestrictPtrTraits>(),
               m_fixed_params.m_concat_points,
               input.m_require_lattice_values_grad,
               input.m_require_positions_grad);
@@ -227,8 +234,8 @@ Encoding<POS_DIM, NR_FEAT_PER_LEVEL>::backward(
   }
 
   lattice_values_monolithic_grad =
-      lattice_values_monolithic_grad.permute({0, 2, 1});
-  positions_grad = positions_grad.transpose(0, 1);
+      lattice_values_monolithic_grad.permute({0, 1, 3, 2});
+  positions_grad = positions_grad.permute({0, 2, 1});
 
   return std::make_tuple(lattice_values_monolithic_grad, positions_grad);
 }

@@ -77,7 +77,7 @@ if __name__ == "__main__":
     # dtypes = (torch.float16,)
     # funcs = (mm_f, enc_f, enc_fnb_allgrads, enc_fnb_latgrads)
     funcs = (enc_f, enc_fnb_all, enc_fnb_lat)
-    funcs = (enc_f,)
+    funcs = (enc_f, enc_fnb_lat)
 
     encoding = {
         dtype: permutohedral_encoding.PermutoEncoding(
