@@ -39,10 +39,10 @@ __global__ void __launch_bounds__(
     forward_gpu(
         const int nr_positions, const int lattice_capacity,
         const int nr_resolutions, const int nr_resolutions_extra,
-        const torch::PackedTensorAccessor32<scalar_t, 2,
+        const torch::PackedTensorAccessor32<scalar_t, 3,
                                             torch::RestrictPtrTraits>
             positions,
-        torch::PackedTensorAccessor32<scalar_t, 3, torch::RestrictPtrTraits>
+        torch::PackedTensorAccessor32<scalar_t, 4, torch::RestrictPtrTraits>
             lattice_values_monolithic,
         const torch::PackedTensorAccessor32<scalar_t, 2,
                                             torch::RestrictPtrTraits>
@@ -53,11 +53,12 @@ __global__ void __launch_bounds__(
         const torch::PackedTensorAccessor32<scalar_t, 1,
                                             torch::RestrictPtrTraits>
             anneal_window,
-        torch::PackedTensorAccessor32<scalar_t, 3, torch::RestrictPtrTraits>
+        torch::PackedTensorAccessor32<scalar_t, 4, torch::RestrictPtrTraits>
             sliced_values_monolithic,
         const bool concat_points, const scalar_t points_scaling,
         const bool require_lattice_values_grad,
         const bool require_positions_grad) {
+  int batch_idx = blockIdx.z;
   int idx = blockIdx.x * blockDim.x +
             threadIdx.x;  // each thread will deal with a new value
 
@@ -70,7 +71,7 @@ __global__ void __launch_bounds__(
 
   scalar_t pos[pos_dim];
   for (int i = 0; i < pos_dim; ++i) {
-    pos[i] = positions[idx][i];
+    pos[i] = positions[batch_idx][idx][i];
   }
 
   // if we are in one of the extra resolutions and we are also concating the
@@ -89,12 +90,12 @@ __global__ void __launch_bounds__(
       int position_dimension_to_copy_from = i + idx_extra_level * val_dim;
 
       if (position_dimension_to_copy_from < pos_dim) {
-        sliced_values_monolithic[level][i][idx] =
+        sliced_values_monolithic[batch_idx][level][i][idx] =
             pos[position_dimension_to_copy_from] * points_scaling;
       } else {
         // we are in the 4 dimensions but we have only posdim=3 so we
         // just put a zero here
-        sliced_values_monolithic[level][i][idx] = scalar_t{0.0};
+        sliced_values_monolithic[batch_idx][level][i][idx] = scalar_t{0.0};
       }
     }
     return;  // nothing further to do for the concatenated dimensions
@@ -221,17 +222,16 @@ __global__ void __launch_bounds__(
     // TODO idx_val and w is the only thing required for backward_gpu (store
     //   these?)
 
-    // vectorized loads
-    scalar_t* ptr_base = lattice_values_monolithic.data();
-    scalar_t* ptr_value = ptr_base +
-                          idx_val * lattice_values_monolithic.stride(1) +
-                          level * lattice_values_monolithic.stride(0);
-    val_hom_vec[0] = val_hom_vec[0] + ptr_value[0] * w;
-    val_hom_vec[1] = val_hom_vec[1] + ptr_value[1] * w;
+    val_hom_vec[0] =
+        val_hom_vec[0] +
+        lattice_values_monolithic[batch_idx][level][idx_val][0] * w;
+    val_hom_vec[1] =
+        val_hom_vec[1] +
+        lattice_values_monolithic[batch_idx][level][idx_val][1] * w;
   }
 
-  sliced_values_monolithic[level][0][idx] = val_hom_vec[0];
-  sliced_values_monolithic[level][1][idx] = val_hom_vec[1];
+  sliced_values_monolithic[batch_idx][level][0][idx] = val_hom_vec[0];
+  sliced_values_monolithic[batch_idx][level][1][idx] = val_hom_vec[1];
 }
 
 template <int pos_dim, int val_dim, typename scalar_t>

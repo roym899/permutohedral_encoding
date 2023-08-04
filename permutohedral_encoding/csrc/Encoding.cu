@@ -26,28 +26,36 @@ void Encoding<POS_DIM, NR_FEAT_PER_LEVEL>::check_positions(
     const torch::Tensor& positions_raw) {
   CHECK(positions_raw.is_cuda())
       << "positions should be in GPU memory. Please call .cuda() on the tensor";
-  CHECK(positions_raw.dim() == 2) << "positions should have shape (num_points, "
-                                     "dim_points), however it has shape"
-                                  << positions_raw.sizes();
-  CHECK(positions_raw.size(0) != 0) << "Why do we have 0 points";
-  CHECK(positions_raw.size(1) != 0)
+  CHECK(positions_raw.dim() == 3)
+      << "positions should have shape (num_batch, num_points, "
+         "dim_points), however it has shape"
+      << positions_raw.sizes();
+  CHECK(positions_raw.size(0) != 0) << "Why do we have batch size 0";
+  CHECK(positions_raw.size(1) != 0) << "Why do we have 0 points";
+  CHECK(positions_raw.size(2) != 0)
       << "Why do we have dimension 0 for the points";
-  CHECK(positions_raw.size(1) == m_fixed_params.m_pos_dim)
+  CHECK(positions_raw.size(2) == m_fixed_params.m_pos_dim)
       << "Pos dim for the lattice doesn't correspond with the position of the "
          "points. Lattice was initialized with "
       << m_fixed_params.m_pos_dim << " and points have pos dim "
-      << positions_raw.size(1);
+      << positions_raw.size(2);
 }
 
 template <uint32_t POS_DIM, uint32_t NR_FEAT_PER_LEVEL>
 torch::Tensor Encoding<POS_DIM, NR_FEAT_PER_LEVEL>::forward(
     const EncodingInput& input) {
   check_positions(input.m_positions_raw);
-  int nr_positions = input.m_positions_raw.size(0);
-  int pos_dim = input.m_positions_raw.size(1);
-  int nr_resolutions = input.m_lattice_values.size(0);
-  int lattice_capacity = input.m_lattice_values.size(1);
-  int val_dim = input.m_lattice_values.size(2);
+  int batch_size_pos = input.m_positions_raw.size(0);
+  int nr_positions = input.m_positions_raw.size(1);
+  int pos_dim = input.m_positions_raw.size(2);
+
+  int batch_size_lattice = input.m_lattice_values.size(0);
+  int nr_resolutions = input.m_lattice_values.size(1);
+  int lattice_capacity = input.m_lattice_values.size(2);
+  int val_dim = input.m_lattice_values.size(3);
+
+  CHECK(batch_size_pos == batch_size_lattice)
+      << "Batch size of positions and lattice must be the same.";
   CHECK(m_fixed_params.m_random_shift_per_level.size(0) == nr_resolutions)
       << "Random shift should have the first dimension the same as the nr of "
          "resolutions";
@@ -68,7 +76,7 @@ torch::Tensor Encoding<POS_DIM, NR_FEAT_PER_LEVEL>::forward(
 
   // initialize the output values
   Tensor sliced_values_hom_tensor = torch::empty(
-      {nr_resolutions + nr_resolutions_extra, val_dim, nr_positions},
+      {batch_size_pos, nr_resolutions + nr_resolutions_extra, val_dim, nr_positions},
       torch::dtype(input.m_lattice_values.scalar_type())
           .device(torch::kCUDA, 0));
 
@@ -76,7 +84,7 @@ torch::Tensor Encoding<POS_DIM, NR_FEAT_PER_LEVEL>::forward(
   const dim3 blocks = {
       (unsigned int)div_round_up(nr_positions, BLOCK_SIZE),
       (unsigned int)(nr_resolutions + nr_resolutions_extra),
-      1};  // the blocks are executed in order, first the blocks for the first
+      (unsigned int)batch_size_pos};  // the blocks are executed in order, first the blocks for the first
            // resolution, then the second and so on
 
   AT_DISPATCH_FLOATING_TYPES_AND_HALF(
@@ -86,9 +94,9 @@ torch::Tensor Encoding<POS_DIM, NR_FEAT_PER_LEVEL>::forward(
                 nr_positions, lattice_capacity, nr_resolutions,
                 nr_resolutions_extra,
                 input.m_positions_raw
-                    .packed_accessor32<scalar_t, 2, torch::RestrictPtrTraits>(),
-                input.m_lattice_values
                     .packed_accessor32<scalar_t, 3, torch::RestrictPtrTraits>(),
+                input.m_lattice_values
+                    .packed_accessor32<scalar_t, 4, torch::RestrictPtrTraits>(),
                 m_fixed_params.m_scale_factor
                     .packed_accessor32<scalar_t, 2, torch::RestrictPtrTraits>(),
                 m_fixed_params.m_random_shift_per_level
@@ -96,7 +104,7 @@ torch::Tensor Encoding<POS_DIM, NR_FEAT_PER_LEVEL>::forward(
                 input.m_anneal_window
                     .packed_accessor32<scalar_t, 1, torch::RestrictPtrTraits>(),
                 sliced_values_hom_tensor
-                    .packed_accessor32<scalar_t, 3, torch::RestrictPtrTraits>(),
+                    .packed_accessor32<scalar_t, 4, torch::RestrictPtrTraits>(),
                 m_fixed_params.m_concat_points, m_fixed_params.m_points_scaling,
                 input.m_require_lattice_values_grad,
                 input.m_require_positions_grad);

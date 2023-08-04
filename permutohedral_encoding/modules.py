@@ -89,10 +89,6 @@ class PermutoEncoding(torch.nn.Module):
         self.fixed_params, self.lattice = self._make_lattice_wrapper()
 
     def forward(self, positions, anneal_window=None):
-        nr_positions = positions.shape[0]
-
-        # positions=positions.transpose(0,1).contiguous().transpose(0,1)
-
         if anneal_window is None:
             anneal_window = self.anneal_window
         else:
@@ -112,11 +108,15 @@ class PermutoEncoding(torch.nn.Module):
             require_positions_grad,
         )
 
-        sliced_values = sliced_values.permute(2, 0, 1).reshape(
-            nr_positions, -1
-        )  # from lvl, val, nr_positions to nr_positions x lvl x val
-        # sliced_values=sliced_values.view(nr_positions, -1)
-        # sliced_values=sliced_values.view(-1,nr_positions).transpose(0,1)
+        if sliced_values.dim() == 4:
+            batch_size = sliced_values.shape[0]
+            sliced_values = sliced_values.permute(0, 3, 1, 2).reshape(
+                batch_size, len(positions), -1
+            )  # from lvl, val, nr_positions to nr_positions x lvl x val
+        elif sliced_values.dim() == 3:
+            sliced_values = sliced_values.permute(2, 0, 1).reshape(
+                len(positions), -1
+            )  # from lvl, val, nr_positions to nr_positions x lvl x val
 
         return sliced_values
 

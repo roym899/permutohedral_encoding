@@ -40,8 +40,10 @@ class SimpleMLP(nn.Module):
         return x
 
 
-def wrapper(params, buffers, queries):
-    return torch.func.functional_call(wrapper_model, (params, buffers), queries)
+def create_wrapper(dtype):
+    def f(params, buffers, queries):
+        return torch.func.functional_call(wrapper_model[dtype], (params, buffers), queries)
+    return f
 
 
 def single_model(dtype, set_to_none) -> None:
@@ -68,11 +70,11 @@ def for_loop(dtype, set_to_none) -> None:
 
 def vmap(dtype, set_to_none) -> None:
     ins = queries[dtype].view(num_mlps, -1, 3)
-    outs = torch.vmap(wrapper)(params[dtype], buffers[dtype], ins)
+    outs = torch.vmap(wrappers[dtype])(params[dtype], buffers[dtype], ins)
     if with_grads:
         loss = outs.flatten().sum()
         loss.backward()
-        for mlp in mlps:
+        for mlp in mlps[dtype]:
             mlp.zero_grad(set_to_none=set_to_none)
 
 
@@ -89,12 +91,13 @@ if __name__ == "__main__":
     num_rays_per_mlp = 10
     num_samples_per_ray = 64
     num_trials = 20
-    num_mlps = 50
+    num_mlps = 1000
     num_queries = num_mlps * num_samples_per_ray * num_rays_per_mlp
     encoding = True
-    with_grads = True
+    with_grads = False
     set_to_none = True
     dtypes = (torch.float16, torch.float32, torch.float64)
+    dtypes = (torch.float32,)
     funcs = [single_model, for_loop, vmap]
 
     # init nets and prepare data
@@ -107,14 +110,17 @@ if __name__ == "__main__":
     params = {}
     buffers = {}
     unique_mlps = {}
+    wrapper_model = {}
+    wrappers = {}
     for dtype in dtypes:
+        wrapper_model[dtype] = SimpleMLP(dtype=dtype)
+        wrappers[dtype] = create_wrapper(dtype)
         mlps[dtype] = [
             SimpleMLP(dtype=dtype, encoding=encoding) for _ in range(num_mlps)
         ]
         queries[dtype] = torch.randn(num_queries, 3, dtype=dtype)
         params[dtype], buffers[dtype] = torch.func.stack_module_state(mlps[dtype])
         unique_mlps[dtype] = [mlps[dtype][i.item()] for i in unique_assignments]
-    wrapper_model = SimpleMLP()
 
     for func in funcs:
         for dtype in dtypes:
