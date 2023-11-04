@@ -20,6 +20,7 @@ class PermutoEncoding(torch.nn.Module):
         concat_points: bool = False,
         concat_points_scaling: float = 1.0,
         dtype: Optional[torch.dtype] = None,
+        init_scale: float = 1e-5
     ):
         super(PermutoEncoding, self).__init__()
         self.pos_dim = pos_dim
@@ -34,7 +35,7 @@ class PermutoEncoding(torch.nn.Module):
 
         # create hashmap values
         lattice_values = (
-            torch.randn(capacity, nr_levels, nr_feat_per_level, dtype=dtype) * 1e-5
+            torch.randn(capacity, nr_levels, nr_feat_per_level, dtype=dtype) * init_scale
         )
         # make it nr_levels x capacity x nr_feat
         lattice_values = lattice_values.permute(1, 0, 2).contiguous()
