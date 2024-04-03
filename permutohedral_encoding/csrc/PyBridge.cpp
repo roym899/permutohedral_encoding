@@ -11,11 +11,11 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
   py::class_<EncodingInput>(m, "EncodingInput")
       .def(py::init<const torch::Tensor&, const torch::Tensor&,
                     const torch::Tensor&, const bool, const bool>())
-      .def_readwrite("m_lattice_values", &EncodingInput::m_lattice_values)
+      .def_readwrite("m_features", &EncodingInput::m_features)
       .def_readwrite("m_positions_raw", &EncodingInput::m_positions_raw)
       .def_readwrite("m_anneal_window", &EncodingInput::m_anneal_window)
-      .def_readwrite("m_require_lattice_values_grad",
-                     &EncodingInput::m_require_lattice_values_grad)
+      .def_readwrite("m_require_features_grad",
+                     &EncodingInput::m_require_features_grad)
       .def_readwrite("m_require_positions_grad",
                      &EncodingInput::m_require_positions_grad);
 

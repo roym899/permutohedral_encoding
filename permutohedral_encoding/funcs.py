@@ -9,66 +9,77 @@ class PermutoEncodingFunc(torch.autograd.Function):
     @staticmethod
     def forward(
         lattice,
-        lattice_values,
+        features,
         positions,
         anneal_window,
-        require_lattice_values_grad,
+        require_features_grad,
         require_positions_grad,
     ):
-        added_batch_dim = False
-
         # add batch dimension if not already there
+        added_batch_dim = False
         if positions.dim() == 2:
             added_batch_dim = True
             positions = positions.unsqueeze(0)
-        if lattice_values.dim() == 3:
-            lattice_values = lattice_values.unsqueeze(0)
+            features = features.unsqueeze(0)
+
+        assert positions.dim() == 3
+        assert features.dim() == 4
+
+        print("forward features", features.shape)
+        print("forward positions", positions.shape)
 
         # forward
         input_struct = _C.EncodingInput(
-            lattice_values,
+            features,
             positions,
             anneal_window,
-            require_lattice_values_grad,
+            require_features_grad,
             require_positions_grad,
         )
-        sliced_values = lattice.forward(input_struct)
+        outs = lattice.forward(input_struct)
 
         # remove batch dimension again if it was added
         if added_batch_dim:
-            sliced_values = sliced_values[0]
+            outs = outs[0]
 
-        return sliced_values
+        return outs
 
     @staticmethod
-    def setup_context(ctx, inputs, output):
+    def setup_context(ctx, inputs, output) -> None:
+        """Setup the context from inputs and outputs.
+
+        Args:
+            ctx: Context object of this function. Passed as first argument to backward.
+            inputs: Tuple of inputs to the forward function.
+            output: Tuple of outputs of the forward function.
+        """
         (
             lattice,
-            lattice_values,
+            features,
             positions,
             anneal_window,
-            require_lattice_values_grad,
+            require_features_grad,
             require_positions_grad,
         ) = inputs
 
-        sliced_values = output
+        outs = output
 
         # save for back
         ctx.lattice = lattice
-        ctx.require_lattice_values_grad = require_lattice_values_grad
+        ctx.require_features_grad = require_features_grad
         ctx.require_positions_grad = require_positions_grad
-        ctx.save_for_backward(positions, anneal_window, lattice_values, sliced_values)
+        ctx.save_for_backward(positions, anneal_window, features, outs)
 
     @staticmethod
     def vmap(
         info,
-        in_dims,
+        in_dims: int,
         lattice,
-        lattice_values,
-        positions,
-        anneal_window,
-        require_lattice_values_grad,
-        require_positions_grad,
+        features: torch.Tensor,
+        positions: torch.Tensor,
+        anneal_window: torch.Tensor,
+        require_features_grad: bool,
+        require_positions_grad: bool,
     ):
         # ensure in_dims is as expected
         assert in_dims[0] is None
@@ -79,80 +90,32 @@ class PermutoEncodingFunc(torch.autograd.Function):
         assert in_dims[2] == 0, "vmapping is only supported over first dimension."
 
         # call kernel
-        sliced_values = PermutoEncodingFunc.apply(
+        outs = PermutoEncodingFunc.apply(
             lattice,
-            lattice_values,
+            features,
             positions,
             anneal_window,
-            lattice_values.requires_grad and torch.is_grad_enabled(),
+            features.requires_grad and torch.is_grad_enabled(),
             positions.requires_grad and torch.is_grad_enabled(),
         )
         out_dims = 0
-        return sliced_values, out_dims
+        return outs, out_dims
 
     @staticmethod
-    @torch.autograd.function.once_differentiable
-    def backward(ctx, grad_sliced_values_monolithic):
+    def backward(ctx, grad_outs):
+        # Unpack saved_tensors
+        positions, anneal_window, features, _ = ctx.saved_tensors
 
-        # restore from ctx
-        lattice = ctx.lattice
-        require_positions_grad = ctx.require_positions_grad
-        require_lattice_values_grad = ctx.require_lattice_values_grad
-        positions, anneal_window, lattice_values, sliced_values = ctx.saved_tensors
-
-        added_batch_dim = False
-
-        # add batch dimension if not already there
-        if positions.dim() == 2:
-            added_batch_dim = True
-            positions = positions.unsqueeze(0)
-        if lattice_values.dim() == 3:
-            lattice_values = lattice_values.unsqueeze(0)
-        if grad_sliced_values_monolithic.dim() == 3:
-            grad_sliced_values_monolithic = grad_sliced_values_monolithic.unsqueeze(0)
-
-        input_struct = _C.EncodingInput(
-            lattice_values,
+        # This is required to support double backward
+        # (see https://pytorch.org/tutorials/intermediate/custom_function_double_backward_tutorial.html)
+        return PermutoEncodingFuncBack.apply(
+            ctx.lattice,
+            features,
             positions,
             anneal_window,
-            require_lattice_values_grad,
-            require_positions_grad,
-        )
-
-        assert (
-            input_struct.m_require_lattice_values_grad
-            or input_struct.m_require_positions_grad
-        ), (
-            "We cannot perform the backward function on the slicing because we did not "
-            "precompute the required tensors in the forward pass. To enable this, set "
-            "the model.train(), set torch.set_grad_enabled(True) and make "
-            "lattice_values have required_grad=True"
-        )
-
-        # for now do not support double backward
-        grad_sliced_values_monolithic = grad_sliced_values_monolithic.contiguous()
-        lattice_values_grad, positions_grad = lattice.backward(
-            input_struct, grad_sliced_values_monolithic
-        )
-
-        # remove batch dimension again if it was added
-        if added_batch_dim:
-            lattice_values_grad = lattice_values_grad[0]
-            positions_grad = positions_grad[0]
-
-        return None, lattice_values_grad, positions_grad, None, None, None
-
-        # NOTE we pass the tensors of lattice_values and positiosn explicitly and not
-        #  throught the input struct so that we can compute gradients from them for the
-        #  double backward pass
-        # ctx.save_for_backward(grad_sliced_values_monolithic)
-        return PermutoEncodingFuncBack.apply(
-            lattice,
-            input_struct,
-            grad_sliced_values_monolithic,
-            input_struct.m_lattice_values,
-            input_struct.m_positions_raw,
-            sliced_values,
+            ctx.require_features_grad,
+            ctx.require_positions_grad,
+            grad_outs,
         )
 
 
@@ -161,75 +124,195 @@ class PermutoEncodingFunc(torch.autograd.Function):
 class PermutoEncodingFuncBack(torch.autograd.Function):
     @staticmethod
     def forward(
-        ctx,
         lattice,
-        input_struct,
-        grad_sliced_values_monolithic,
-        lattice_values,
-        positions,
-        sliced_values_hom,
+        features: torch.Tensor,
+        positions: torch.Tensor,
+        anneal_window: torch.Tensor,
+        require_features_grad: bool,
+        require_positions_grad: bool,
+        grad_outs: torch.Tensor,
     ):
-        lattice_values_grad = None
-        positions_grad = None
+        """Return the gradient of each input of PermutoEncodingFunc.
 
-        if (
-            input_struct.m_require_lattice_values_grad
+        Args:
+            forward_ctx: Context object of PermutoEncodingFunc.
+            grad_outs: Gradients of the output of the forward function.
+
+        Returns:
+            Tuple of gradients of the inputs of PermutoEncodingFunc.
+            None for non-differentiable inputs / non-tensor inputs.
+        """
+        # add batch dimension if not already there
+        added_batch_dim = False
+        if positions.dim() == 2:
+            added_batch_dim = True
+            positions = positions.unsqueeze(0)
+            features = features.unsqueeze(0)
+            grad_outs = grad_outs.unsqueeze(0)
+
+        assert positions.dim() == 3
+        assert features.dim() == 4
+        assert grad_outs.dim() == 4
+
+        input_struct = _C.EncodingInput(
+            features,
+            positions,
+            anneal_window,
+            require_features_grad,
+            require_positions_grad,
+        )
+
+        assert (
+            input_struct.m_require_features_grad
             or input_struct.m_require_positions_grad
-        ):
-            grad_sliced_values_monolithic = grad_sliced_values_monolithic.contiguous()
+        ), (
+            "We cannot perform the backward function on the slicing because we did not "
+            "precompute the required tensors in the forward pass. To enable this, set "
+            "the model.train(), set torch.set_grad_enabled(True) and make "
+            "features have required_grad=True"
+        )
 
-            ctx.save_for_backward(grad_sliced_values_monolithic)
-            ctx.lattice = lattice
-            ctx.input_struct = input_struct
+        print("back features", features.shape)
+        print("back positions", positions.shape)
+        print("back grad_outs", grad_outs.shape)
 
-            lattice_values_grad, positions_grad = lattice.backward(
-                input_struct, grad_sliced_values_monolithic
-            )
+        grad_outs = grad_outs.contiguous()
+        grad_features, grad_positions = lattice.backward(
+            input_struct, grad_outs
+        )
 
-        return None, lattice_values_grad, positions_grad, None, None, None
+        # remove batch dimension again if it was added
+        if added_batch_dim:
+            grad_features = grad_features[0]
+            grad_positions = grad_positions[0]
+
+        # One output for each input of PermutoEncodingFunc.forward
+        return (
+            None,  # lattice
+            grad_features,  # features
+            grad_positions,  # positions
+            None,  # anneal_window
+            None,  # require_features_grad
+            None,  # require_positions_grad
+        )
+
+    @staticmethod
+    def setup_context(ctx, inputs, output):
+        """Setup the context from inputs and outputs.
+
+
+        Args:
+            ctx: Context object of this function. Passed as first argument to backward.
+            inputs: Tuple of inputs to the forward function.
+            output: Tuple of outputs of the forward function.
+        """
+        (
+            lattice,
+            features,
+            positions,
+            anneal_window,
+            require_features_grad,
+            require_positions_grad,
+            grad_outs,
+        ) = inputs
+
+        _, grad_features, grad_positions, _, _, _ = output
+
+        # save for back
+        ctx.lattice = lattice
+        ctx.require_features_grad = require_features_grad
+        ctx.require_positions_grad = require_positions_grad
+        ctx.save_for_backward(
+            positions, anneal_window, features, grad_outs
+        )
 
     @staticmethod
     def backward(
         ctx,
-        dummy1,
-        double_lattice_values_grad,
-        double_positions_grad,
-        dummy5,
-        dummy6,
-        dummy7,
+        dummy1,  # lattice
+        grad_grad_features,  # features
+        grad_grad_positions,  # positions
+        dummy2,  # anneal_window
+        dummy3,  # require_features_grad
+        dummy4,  # require_positions_grad
     ):
-        # NOTE in the forward pass of this module we do
-        #  lattice_values_grad, positions_grad = slice_back(
-        #     lattice_values_monolithic, grad_sliced_values_monolithic, positions)
-        #  now in the backward pass we have the upstream gradient which is
-        #  double_lattice_values_grad, double_positions_grad
-        #  we want to propagate the double_positions_grad into lattice_values_monolithic
-        #  and grad_sliced_values_monolithic
+        """Compute the derivative of PermutoEncodingFuncBack wrt to its inputs.
 
-        (grad_sliced_values_monolithic,) = ctx.saved_tensors
-        lattice = ctx.lattice
-        input_struct = ctx.input_struct
+        Args:
+            ctx: Context object of PermutoEncodingFuncBack.
+            dummy1: Unused.
+            grad_grad_features: dl2/d(dl1/df).
+            grad_grad_positions: dl2/d(dl1/dp).
+            dummy2: Unused.
+            dummy3: Unused.
+            dummy4: Unused.
 
+        Returns:
+            dummy1: Unused.
+            grad_features: dl2/df.
+            grad_positions: dl2/dp.
+            dummy2: Unused.
+            dummy3: Unused.
+            dummy4: Unused.
+            grad_grad_outs: dl2/d(dl1/do).
+        """
+
+        # unpack context
         (
-            grad_lattice_values_monolithic,
-            grad_grad_sliced_values_monolithic,
-        ) = lattice.double_backward_from_positions(
-            input_struct, double_positions_grad, grad_sliced_values_monolithic
+            positions,
+            anneal_window,
+            features,
+            grad_outs,
+        ) = ctx.saved_tensors
+        lattice = ctx.lattice
+        require_features_grad = ctx.require_features_grad
+        require_positions_grad = ctx.require_positions_grad
+
+        # add batch dimension if not already there
+        added_batch_dim = False
+        if grad_grad_positions.dim() == 2:
+            added_batch_dim = True
+            grad_grad_features = grad_grad_features.unsqueeze(0)
+            grad_grad_positions = grad_grad_positions.unsqueeze(0)
+            positions = positions.unsqueeze(0)
+            features = features.unsqueeze(0)
+            grad_outs = grad_outs.unsqueeze(0)
+
+        input_struct = _C.EncodingInput(
+            features,
+            positions,
+            anneal_window,
+            require_features_grad,
+            require_positions_grad,
         )
 
+        # print("double back features", features.shape)
+        # print("double back positions", positions.shape)
+        # print("double back grad_grad_features", grad_grad_features.shape)
+        # print("double back grad_grad_positions", grad_grad_positions.shape)
+        # print("double back grad_outs", grad_outs.shape)
+
+        grad_outs = grad_outs.contiguous()
+
+        (
+            grad_features,
+            grad_grad_outs,
+        ) = lattice.double_backward_from_positions(
+            input_struct, grad_grad_positions, grad_outs
+        )
+
+        if added_batch_dim:
+            grad_features = grad_features[0]
+            grad_positions = None
+            grad_grad_outs = grad_grad_outs[0]
+
+        # One output for each input of PermutoEncodingFuncBack.forward
         return (
-            None,
-            None,
-            grad_grad_sliced_values_monolithic,
-            grad_lattice_values_monolithic,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
+            None,  # lattice
+            grad_features,  # features
+            grad_positions,  # positions
+            None,  # anneal_window
+            None,  # require_features_grad
+            None,  # require_positions_grad
+            grad_grad_outs,  # grad_outs
         )

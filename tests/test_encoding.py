@@ -53,7 +53,7 @@ def test_lattice_grad() -> None:
     loss = out_features.sum()
     loss.backward()
     assert torch.allclose(
-        encoding.lattice_values.grad, correct_lattice_grad
+        encoding.features.grad, correct_lattice_grad
     )
 
 
@@ -86,4 +86,4 @@ if __name__ == "__main__":
     torch.save(out_features, "out_features.pt")
     torch.save(in_points, "in_points.pt")
     torch.save(in_points.grad, "in_points_grad.pt")
-    torch.save(encoding.lattice_values.grad, "encoding_lattice_grad.pt")
+    torch.save(encoding.features.grad, "encoding_lattice_grad.pt")

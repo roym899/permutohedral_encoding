@@ -34,12 +34,12 @@ class PermutoEncoding(torch.nn.Module):
         self.dtype = dtype
 
         # create hashmap values
-        lattice_values = (
+        features = (
             torch.randn(capacity, nr_levels, nr_feat_per_level, dtype=dtype) * init_scale
         )
         # make it nr_levels x capacity x nr_feat
-        lattice_values = lattice_values.permute(1, 0, 2).contiguous()
-        self.lattice_values = torch.nn.Parameter(lattice_values.cuda())
+        features = features.permute(1, 0, 2).contiguous()
+        self.features = torch.nn.Parameter(features.cuda())
 
         # each levels of the hashamp can be randomly shifted so that we minimize
         #  collisions
@@ -95,17 +95,17 @@ class PermutoEncoding(torch.nn.Module):
         else:
             anneal_window = anneal_window.cuda()
 
-        require_lattice_values_grad = (
-            self.lattice_values.requires_grad and torch.is_grad_enabled()
+        require_features_grad = (
+            self.features.requires_grad and torch.is_grad_enabled()
         )
         require_positions_grad = positions.requires_grad and torch.is_grad_enabled()
 
         sliced_values = funcs.PermutoEncodingFunc.apply(
             self.lattice,
-            self.lattice_values,
+            self.features,
             positions,
             anneal_window,
-            require_lattice_values_grad,
+            require_features_grad,
             require_positions_grad,
         )
 
