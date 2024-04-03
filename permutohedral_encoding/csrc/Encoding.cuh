@@ -10,9 +10,10 @@
 // minimum input required for any call to the encoding function. Makes it easies
 // to declare the functions since they will all at least get this as input
 struct EncodingInput {
-  EncodingInput(const torch::Tensor& features, const torch::Tensor& positions_raw,
-                const torch::Tensor& anneal_window, const bool require_features_grad,
-                const bool require_positions_grad)
+  EncodingInput(
+      const torch::Tensor& features, const torch::Tensor& positions_raw, const torch::Tensor& anneal_window,
+      const bool require_features_grad, const bool require_positions_grad
+  )
       : m_features(features),
         m_positions_raw(positions_raw),
         m_anneal_window(anneal_window),
@@ -29,9 +30,11 @@ struct EncodingInput {
 
 // Fixed params that do not change during the lifetime of the lattice.
 struct EncodingFixedParams {
-  EncodingFixedParams(const int pos_dim, const int cap, const int nr_levels, const int nr_feat_per_level,
-                      const std::vector<float>& sigmas_list, const torch::Tensor& random_shift_per_level,
-                      const bool concat_points, const float points_scaling)
+  EncodingFixedParams(
+      const int pos_dim, const int cap, const int nr_levels, const int nr_feat_per_level,
+      const std::vector<float>& sigmas_list, const torch::Tensor& random_shift_per_level,
+      const bool concat_points, const float points_scaling
+  )
       : m_pos_dim(pos_dim),
         m_capacity(cap),
         m_nr_levels(nr_levels),
@@ -57,9 +60,10 @@ struct EncodingFixedParams {
   torch::Tensor compute_scale_factor_tensor(const std::vector<float> sigmas_list, const int pos_dim) {
     int nr_resolutions = sigmas_list.size();
 
-    torch::Tensor scale_factor_tensor =
-        torch::zeros({nr_resolutions, pos_dim},
-                     torch::dtype(m_random_shift_per_level.scalar_type()).device(torch::kCUDA, 0));
+    torch::Tensor scale_factor_tensor = torch::zeros(
+        {nr_resolutions, pos_dim},
+        torch::dtype(m_random_shift_per_level.scalar_type()).device(torch::kCUDA, 0)
+    );
 
     float invStdDev = 1.0;
     for (int res_idx = 0; res_idx < nr_resolutions; res_idx++) {
@@ -80,11 +84,13 @@ struct EncodingFixedParams {
 class EncodingBase {
  public:
   virtual torch::Tensor forward(const EncodingInput& input) = 0;
-  virtual std::tuple<torch::Tensor, torch::Tensor> backward(const EncodingInput& input,
-                                                            torch::Tensor& grad_sliced_values_monolithic) = 0;
-  virtual std::tuple<torch::Tensor, torch::Tensor> double_backward_from_positions(
+  virtual std::tuple<torch::Tensor, torch::Tensor> backward(
+      const EncodingInput& input, torch::Tensor& grad_sliced_values_monolithic
+  ) = 0;
+  virtual std::tuple<torch::Tensor, torch::Tensor> double_backward(
       const EncodingInput& input, const torch::Tensor& double_positions_grad,
-      torch::Tensor& grad_sliced_values_monolithic) = 0;
+      torch::Tensor& grad_sliced_values_monolithic
+  ) = 0;
 };
 
 template <uint32_t POS_DIM, uint32_t NR_FEAT_PER_LEVEL>
@@ -104,13 +110,15 @@ class Encoding : public EncodingBase,
   torch::Tensor forward(const EncodingInput& input) override;
 
   // backwards passes
-  std::tuple<torch::Tensor, torch::Tensor> backward(const EncodingInput& input,
-                                                    torch::Tensor& grad_sliced_values_monolithic) override;
+  std::tuple<torch::Tensor, torch::Tensor> backward(
+      const EncodingInput& input, torch::Tensor& grad_sliced_values_monolithic
+  ) override;
 
   // double backward
-  std::tuple<torch::Tensor, torch::Tensor> double_backward_from_positions(
+  std::tuple<torch::Tensor, torch::Tensor> double_backward(
       const EncodingInput& input, const torch::Tensor& double_positions_grad,
-      torch::Tensor& grad_sliced_values_monolithic) override;
+      torch::Tensor& grad_sliced_values_monolithic
+  ) override;
 
  private:
   void check_positions(const torch::Tensor& positions_raw);
@@ -125,7 +133,8 @@ class Encoding : public EncodingBase,
 // templates on pos_dim and call the nr_feat_one
 template <uint32_t POS_DIM>
 inline std::shared_ptr<EncodingBase> create_encoding_template_pos_dim(
-    const int pos_dim, const int nr_feat_per_level, const EncodingFixedParams& fixed_params) {
+    const int pos_dim, const int nr_feat_per_level, const EncodingFixedParams& fixed_params
+) {
   switch (nr_feat_per_level) {
     case (2):
       return std::make_shared<Encoding<POS_DIM, 2>>(fixed_params);
@@ -139,8 +148,9 @@ inline std::shared_ptr<EncodingBase> create_encoding_template_pos_dim(
 }
 // since we need to call template cuda functions we need to create a templated
 // encoding object that has a compile time known pos dim and nr_feat_per_level
-inline std::shared_ptr<EncodingBase> create_encoding(const int pos_dim, const int nr_feat_per_level,
-                                                     const EncodingFixedParams& fixed_params) {
+inline std::shared_ptr<EncodingBase> create_encoding(
+    const int pos_dim, const int nr_feat_per_level, const EncodingFixedParams& fixed_params
+) {
   switch (pos_dim) {
     // case(2): return create_encoding_template_pos_dim<2>(pos_dim,
     // nr_feat_per_level);
@@ -173,15 +183,16 @@ class EncodingWrapper : public std::enable_shared_from_this<EncodingWrapper> {
   ~EncodingWrapper(){};
 
   torch::Tensor forward(const EncodingInput& input) { return m_encoding->forward(input); }
-  std::tuple<torch::Tensor, torch::Tensor> backward(const EncodingInput& input,
-                                                    torch::Tensor& grad_sliced_values_monolithic) {
+  std::tuple<torch::Tensor, torch::Tensor> backward(
+      const EncodingInput& input, torch::Tensor& grad_sliced_values_monolithic
+  ) {
     return m_encoding->backward(input, grad_sliced_values_monolithic);
   }
-  std::tuple<torch::Tensor, torch::Tensor> double_backward_from_positions(
+  std::tuple<torch::Tensor, torch::Tensor> double_backward(
       const EncodingInput& input, const torch::Tensor& double_positions_grad,
-      torch::Tensor& grad_sliced_values_monolithic) {
-    return m_encoding->double_backward_from_positions(input, double_positions_grad,
-                                                      grad_sliced_values_monolithic);
+      torch::Tensor& grad_sliced_values_monolithic
+  ) {
+    return m_encoding->double_backward(input, double_positions_grad, grad_sliced_values_monolithic);
   }
 
  private:

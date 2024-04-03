@@ -541,7 +541,7 @@ __global__ void __launch_bounds__(BLOCK_SIZE_BACK)  // since the block size is k
 
 //double back
 template <int pos_dim, int val_dim, typename scalar_t>
-__global__ void __launch_bounds__(BLOCK_SIZE_DOUBLE_BACK) double_backward_from_positions_gpu(
+__global__ void __launch_bounds__(BLOCK_SIZE_DOUBLE_BACK) double_backward_gpu(
     const int nr_positions, const int lattice_capacity, const int nr_resolutions,
     const torch::PackedTensorAccessor32<scalar_t, 3, torch::RestrictPtrTraits> grad_grad_positions,
     const torch::PackedTensorAccessor32<scalar_t, 4, torch::RestrictPtrTraits> features,
@@ -553,7 +553,7 @@ __global__ void __launch_bounds__(BLOCK_SIZE_DOUBLE_BACK) double_backward_from_p
     const bool concat_points,
     //output
     torch::PackedTensorAccessor32<scalar_t, 4, torch::RestrictPtrTraits> grad_grad_outs,
-    torch::PackedTensorAccessor32<scalar_t, 4, torch::RestrictPtrTraits> features_grad
+    torch::PackedTensorAccessor32<scalar_t, 4, torch::RestrictPtrTraits> grad_features
 ) {
   const int batch_idx = blockIdx.z;
   const int idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -681,8 +681,12 @@ __global__ void __launch_bounds__(BLOCK_SIZE_DOUBLE_BACK) double_backward_from_p
 
     const scalar_t* fv = &features[batch_idx][level][idx_val][0];
 
-    atomicAdd(&features_grad[level][0][idx_val], dL_dbarycentric[remainder] * w_lvl * grad_outs_cur[0]);
-    atomicAdd(&features_grad[level][1][idx_val], dL_dbarycentric[remainder] * w_lvl * grad_outs_cur[1]);
+    atomicAdd(
+        &grad_features[batch_idx][level][0][idx_val], dL_dbarycentric[remainder] * w_lvl * grad_outs_cur[0]
+    );
+    atomicAdd(
+        &grad_features[batch_idx][level][1][idx_val], dL_dbarycentric[remainder] * w_lvl * grad_outs_cur[1]
+    );
 
     grad_grad_outs_cur[0] += dL_dbarycentric[remainder] * w_lvl * fv[0];
     grad_grad_outs_cur[1] += dL_dbarycentric[remainder] * w_lvl * fv[1];

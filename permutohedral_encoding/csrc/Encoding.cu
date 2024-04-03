@@ -197,7 +197,7 @@ std::tuple<torch::Tensor, torch::Tensor> Encoding<POS_DIM, NR_FEAT_PER_LEVEL>::b
 }
 
 template <uint32_t POS_DIM, uint32_t NR_FEAT_PER_LEVEL>
-std::tuple<torch::Tensor, torch::Tensor> Encoding<POS_DIM, NR_FEAT_PER_LEVEL>::double_backward_from_positions(
+std::tuple<torch::Tensor, torch::Tensor> Encoding<POS_DIM, NR_FEAT_PER_LEVEL>::double_backward(
     const EncodingInput& input, const torch::Tensor& grad_grad_positions,
     torch::Tensor& grad_encoded_positions
 ) {
@@ -242,6 +242,10 @@ std::tuple<torch::Tensor, torch::Tensor> Encoding<POS_DIM, NR_FEAT_PER_LEVEL>::d
       {batch_size_features, nr_resolutions, val_dim, lattice_capacity},
       tensor_options
   );
+  Tensor grad_positions = torch::zeros(
+      {batch_size_pos, nr_positions, pos_dim},
+      tensor_options
+  );
   Tensor grad_grad_encoded_positions = torch::zeros(
       {batch_size_pos, nr_resolutions + nr_resolutions_extra, val_dim, nr_positions},
       tensor_options
@@ -252,26 +256,26 @@ std::tuple<torch::Tensor, torch::Tensor> Encoding<POS_DIM, NR_FEAT_PER_LEVEL>::d
   dim3 blocks = {
       (unsigned int)div_round_up(nr_positions, BLOCK_SIZE_DOUBLE_BACK), (unsigned int)nr_resolutions, 1};
 
-  /* AT_DISPATCH_FLOATING_TYPES_AND_HALF( */
-  /*     input.m_features.scalar_type(), "double_backward_gpu", ([&] { */
-  /*       double_backward_from_positions_gpu<POS_DIM, NR_FEAT_PER_LEVEL, scalar_t> */
-  /*           <<<blocks, BLOCK_SIZE_DOUBLE_BACK, 0, at::cuda::getCurrentCUDAStream()>>>( */
-  /*               nr_positions, lattice_capacity, nr_resolutions, */
-  /*               grad_grad_positions.packed_accessor32<float, 2, torch::RestrictPtrTraits>(), */
-  /*               input.m_features.packed_accessor32<float, 3, torch::RestrictPtrTraits>(), */
-  /*               input.m_positions_raw.packed_accessor32<float, 2, torch::RestrictPtrTraits>(), */
-  /*               m_fixed_params.m_scale_factor.packed_accessor32<float, 2, torch::RestrictPtrTraits>(), */
-  /*               m_fixed_params.m_random_shift_per_level.packed_accessor32<float, 2, torch::RestrictPtrTraits>( */
-  /*               ), */
-  /*               input.m_anneal_window.packed_accessor32<float, 1, torch::RestrictPtrTraits>(), */
-  /*               grad_encoded_positions.packed_accessor32<float, 3, torch::RestrictPtrTraits>(), */
-  /*               m_fixed_params.m_concat_points, */
-  /*               // output */
-  /*               grad_grad_encoded_positions.packed_accessor32<float, 3, torch::RestrictPtrTraits>(), */
-  /*               grad_features.packed_accessor32<float, 3, torch::RestrictPtrTraits>() */
-  /*           ); */
-  /*     }) */
-  /* ); */
+  AT_DISPATCH_FLOATING_TYPES_AND_HALF(
+      input.m_features.scalar_type(), "double_backward_gpu", ([&] {
+        double_backward_gpu<POS_DIM, NR_FEAT_PER_LEVEL, scalar_t>
+            <<<blocks, BLOCK_SIZE_DOUBLE_BACK, 0, at::cuda::getCurrentCUDAStream()>>>(
+                nr_positions, lattice_capacity, nr_resolutions,
+                grad_grad_positions.packed_accessor32<scalar_t, 3, torch::RestrictPtrTraits>(),
+                input.m_features.packed_accessor32<scalar_t, 4, torch::RestrictPtrTraits>(),
+                input.m_positions_raw.packed_accessor32<scalar_t, 3, torch::RestrictPtrTraits>(),
+                m_fixed_params.m_scale_factor.packed_accessor32<scalar_t, 2, torch::RestrictPtrTraits>(),
+                m_fixed_params.m_random_shift_per_level.packed_accessor32<scalar_t, 2, torch::RestrictPtrTraits>(
+                ),
+                input.m_anneal_window.packed_accessor32<scalar_t, 1, torch::RestrictPtrTraits>(),
+                grad_encoded_positions.packed_accessor32<scalar_t, 4, torch::RestrictPtrTraits>(),
+                m_fixed_params.m_concat_points,
+                // output
+                grad_grad_encoded_positions.packed_accessor32<scalar_t, 4, torch::RestrictPtrTraits>(),
+                grad_features.packed_accessor32<scalar_t, 4, torch::RestrictPtrTraits>()
+            );
+      })
+  );
 
   grad_features = grad_features.permute({0, 1, 3, 2});
 

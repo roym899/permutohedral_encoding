@@ -25,8 +25,8 @@ class PermutoEncodingFunc(torch.autograd.Function):
         assert positions.dim() == 3
         assert features.dim() == 4
 
-        print("forward features", features.shape)
-        print("forward positions", positions.shape)
+        # print("forward features", features.shape)
+        # print("forward positions", positions.shape)
 
         # forward
         input_struct = _C.EncodingInput(
@@ -172,9 +172,9 @@ class PermutoEncodingFuncBack(torch.autograd.Function):
             "features have required_grad=True"
         )
 
-        print("back features", features.shape)
-        print("back positions", positions.shape)
-        print("back grad_outs", grad_outs.shape)
+        # print("back features", features.shape)
+        # print("back positions", positions.shape)
+        # print("back grad_outs", grad_outs.shape)
 
         grad_outs = grad_outs.contiguous()
         grad_features, grad_positions = lattice.backward(
@@ -296,8 +296,9 @@ class PermutoEncodingFuncBack(torch.autograd.Function):
 
         (
             grad_features,
+            # grad_positions,
             grad_grad_outs,
-        ) = lattice.double_backward_from_positions(
+        ) = lattice.double_backward(
             input_struct, grad_grad_positions, grad_outs
         )
 
