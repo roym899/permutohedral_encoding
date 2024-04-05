@@ -29,7 +29,7 @@ template <int pos_dim>
 /* Hash function used in this implementation. A simple base conversion. */
 __forceinline__ __device__ unsigned int hash(const int* const key) {
   unsigned int k = 0;
-#pragma unroll
+
   for (int i = 0; i < pos_dim; ++i) {
     k += key[i];
     k = k * 2531011;
@@ -58,8 +58,7 @@ __global__ void __launch_bounds__(BLOCK_SIZE) forward_gpu(
     const scalar_t points_scaling, const bool require_features_grad, const bool require_positions_grad
 ) {
   const int batch_idx = blockIdx.z;
-  int idx = blockIdx.x * blockDim.x + threadIdx.x;
-
+  const int idx = blockIdx.x * blockDim.x + threadIdx.x;
   if (idx >= nr_positions) {
     return;
   }
@@ -102,7 +101,7 @@ __global__ void __launch_bounds__(BLOCK_SIZE) forward_gpu(
   // Encoding.cuh)
   scalar_t elevated[pos_dim + 1];
   scalar_t sm{0.0};
-#pragma unroll
+
   for (int i = pos_dim; i > 0; --i) {
     scalar_t cf = (pos[i - 1] + random_shift_monolithic[level][i - 1]) * scale_factor[level][i - 1];
     elevated[i] = sm - i * cf;
@@ -117,7 +116,7 @@ __global__ void __launch_bounds__(BLOCK_SIZE) forward_gpu(
   int rem0[pos_dim + 1];  // closest remainder-0 point
   int sum{0};
   scalar_t factor{scalar_t{1.0} / (pos_dim + 1)};
-#pragma unroll
+
   for (int i = 0; i <= pos_dim; ++i) {
     scalar_t v = elevated[i] * factor;
     // find nearest multiples of (pos_dim + 1)
@@ -136,11 +135,11 @@ __global__ void __launch_bounds__(BLOCK_SIZE) forward_gpu(
   // position coordinate i has in the sorted order of the features values)
   // Conway et al., 1998 p. 447-448 (Algorithm 3, Step 3)
   int rank[pos_dim + 1]{};
-#pragma unroll
+
   for (int i = 0; i < pos_dim; ++i) {
     scalar_t di = elevated[i] - rem0[i];
 
-#pragma unroll
+
     for (int j = i + 1; j <= pos_dim; ++j)
       if (di < elevated[j] - rem0[j])
         ++rank[i];
@@ -150,7 +149,7 @@ __global__ void __launch_bounds__(BLOCK_SIZE) forward_gpu(
 
   // If the point doesn't lie on the plane (sum != 0) bring it back
   // Conway et al., 1998 p. 447-448 (Algorithm 3, Step 4)
-#pragma unroll
+
   for (int i = 0; i <= pos_dim; ++i) {
     rank[i] += sum;
     if (rank[i] < 0) {
@@ -165,7 +164,7 @@ __global__ void __launch_bounds__(BLOCK_SIZE) forward_gpu(
   // Compute the barycentric coordinates
   // Baek et al., 2009 (Proposition 4.2)
   scalar_t barycentric[pos_dim + 2]{};
-#pragma unroll
+
   for (int i = 0; i <= pos_dim; ++i) {
     scalar_t delta = (elevated[i] - rem0[i]) * factor;
     // NOTE
@@ -183,7 +182,7 @@ __global__ void __launch_bounds__(BLOCK_SIZE) forward_gpu(
 
   /* // Original Implementation */
   /* scalar_t barycentric[pos_dim + 2]{}; */
-  /* #pragma unroll */
+  /*  */
   /* for (int i = 0; i <= pos_dim; ++i) { */
   /*   scalar_t delta = (elevated[i] - rem0[i]) * factor; */
   /*   barycentric[pos_dim - rank[i]] += delta; */
@@ -197,21 +196,16 @@ __global__ void __launch_bounds__(BLOCK_SIZE) forward_gpu(
   scalar_t w_lvl = anneal_window[level];
 
   int key[pos_dim];
-#pragma unroll
+
   for (int remainder = 0; remainder <= pos_dim; remainder++) {
-    // Compute the location of the lattice point explicitly (all but
-    // the last coordinate - it's redundant because they sum to zero)
-#pragma unroll
+
     for (int i = 0; i < pos_dim; ++i) {
       key[i] = rem0[i] + remainder;
       if (rank[i] > pos_dim - remainder) key[i] -= (pos_dim + 1);
     }
 
-    // Retrieve pointer to the value at this vertex.
     int idx_val = idx_hash_with_collision<pos_dim>(key, lattice_capacity);
 
-    // if the vertex exists accumulate its value weighted by the barycentric
-    // weight (accumulates also the homogeneous coordinate)
     scalar_t w = barycentric[remainder] * w_lvl;
 
     val_hom_vec[0] = val_hom_vec[0] + features[batch_idx][level][idx_val][0] * w;
@@ -223,27 +217,17 @@ __global__ void __launch_bounds__(BLOCK_SIZE) forward_gpu(
 }
 
 template <int pos_dim, int val_dim, typename scalar_t>
-__global__ void __launch_bounds__(BLOCK_SIZE_BACK)  // since the block size is known at compile time we can
-                                                    // specify it to the kernel and therefore cuda doesnt need
-                                                    // to use heuristics based on code complexity to minimize
-                                                    // registry usage
-    backward_gpu(
-        const int nr_positions, const int lattice_capacity,
-        const torch::PackedTensorAccessor32<scalar_t, 4, torch::RestrictPtrTraits> features,
-        const torch::PackedTensorAccessor32<scalar_t, 3, torch::RestrictPtrTraits> positions,
-        const torch::PackedTensorAccessor32<scalar_t, 2, torch::RestrictPtrTraits> scale_factor,
-        const torch::PackedTensorAccessor32<scalar_t, 2, torch::RestrictPtrTraits> random_shift_monolithic,
-        const torch::PackedTensorAccessor32<scalar_t, 1, torch::RestrictPtrTraits> anneal_window,
-        const torch::PackedTensorAccessor32<scalar_t, 4, torch::RestrictPtrTraits> grad_outs,
-        torch::PackedTensorAccessor32<scalar_t, 4, torch::RestrictPtrTraits> grad_features,
-        const bool concat_points
-    ) {
-  // features refers to the values that the lattice had in the forward pass. it has size m_hash_table_capcity
-  // x (val_dim+1) grad_outs is the gradient of the loss with respect to the output which has
-  // size nr_positions x val_dim
-
-  // code should be the same as forward (without concatenating positions in the
-  // beginning) until last loop
+__global__ void __launch_bounds__(BLOCK_SIZE_BACK) backward_gpu(
+    const int nr_positions, const int lattice_capacity,
+    const torch::PackedTensorAccessor32<scalar_t, 4, torch::RestrictPtrTraits> features,
+    const torch::PackedTensorAccessor32<scalar_t, 3, torch::RestrictPtrTraits> positions,
+    const torch::PackedTensorAccessor32<scalar_t, 2, torch::RestrictPtrTraits> scale_factor,
+    const torch::PackedTensorAccessor32<scalar_t, 2, torch::RestrictPtrTraits> random_shift_monolithic,
+    const torch::PackedTensorAccessor32<scalar_t, 1, torch::RestrictPtrTraits> anneal_window,
+    const torch::PackedTensorAccessor32<scalar_t, 4, torch::RestrictPtrTraits> grad_outs,
+    torch::PackedTensorAccessor32<scalar_t, 4, torch::RestrictPtrTraits> grad_features,
+    const bool concat_points
+) {
   const int batch_idx = blockIdx.z;
   const int idx = blockIdx.x * blockDim.x + threadIdx.x;
   if (idx >= nr_positions) {
@@ -259,7 +243,7 @@ __global__ void __launch_bounds__(BLOCK_SIZE_BACK)  // since the block size is k
 
   scalar_t elevated[pos_dim + 1];
   scalar_t sm{};
-#pragma unroll
+
   for (int i = pos_dim; i > 0; i--) {
     scalar_t cf = (pos[i - 1] + random_shift_monolithic[level][i - 1]) * scale_factor[level][i - 1];
     elevated[i] = sm - i * cf;
@@ -270,15 +254,14 @@ __global__ void __launch_bounds__(BLOCK_SIZE_BACK)  // since the block size is k
   int rem0[pos_dim + 1];
   int sum{0};
   scalar_t factor{scalar_t{1.0} / (pos_dim + 1)};
-#pragma unroll
+
   for (int i = 0; i <= pos_dim; ++i) {
     scalar_t v = elevated[i] * factor;
-    // find nearest multiples of (pos_dim + 1)
     scalar_t up = ceil(v) * (pos_dim + 1);
     scalar_t down = floor(v) * (pos_dim + 1);
-    if (up - elevated[i] < elevated[i] - down) {  // up is closer
+    if (up - elevated[i] < elevated[i] - down) {
       rem0[i] = (int)up;
-    } else {  // down is closer
+    } else {
       rem0[i] = (int)down;
     }
     sum += rem0[i];
@@ -286,11 +269,11 @@ __global__ void __launch_bounds__(BLOCK_SIZE_BACK)  // since the block size is k
   sum /= pos_dim + 1;
 
   int rank[pos_dim + 1]{};
-#pragma unroll
+
   for (int i = 0; i < pos_dim; ++i) {
     scalar_t di = elevated[i] - rem0[i];
 
-#pragma unroll
+
     for (int j = i + 1; j <= pos_dim; ++j)
       if (di < elevated[j] - rem0[j])
         ++rank[i];
@@ -298,7 +281,7 @@ __global__ void __launch_bounds__(BLOCK_SIZE_BACK)  // since the block size is k
         ++rank[j];
   }
 
-#pragma unroll
+
   for (int i = 0; i <= pos_dim; ++i) {
     rank[i] += sum;
     if (rank[i] < 0) {
@@ -311,7 +294,7 @@ __global__ void __launch_bounds__(BLOCK_SIZE_BACK)  // since the block size is k
   }
 
   scalar_t barycentric[pos_dim + 2]{};
-#pragma unroll
+
   for (int i = 0; i <= pos_dim; ++i) {
     scalar_t delta = (elevated[i] - rem0[i]) * factor;
     for (int j = 0; j <= pos_dim; ++j) {
@@ -327,9 +310,9 @@ __global__ void __launch_bounds__(BLOCK_SIZE_BACK)  // since the block size is k
   scalar_t w_lvl = anneal_window[level];
 
   int key[pos_dim];
-#pragma unroll
+
   for (int remainder = 0; remainder <= pos_dim; remainder++) {
-#pragma unroll
+
     for (int i = 0; i < pos_dim; ++i) {
       key[i] = rem0[i] + remainder;
       if (rank[i] > pos_dim - remainder) key[i] -= (pos_dim + 1);
@@ -340,22 +323,14 @@ __global__ void __launch_bounds__(BLOCK_SIZE_BACK)  // since the block size is k
 
     scalar_t w = barycentric[remainder] * w_lvl;
 
-    /* TODO maybe can change layout to use half2 here instead
-     * for now just use float for atomicAdd
-     * see also
-     * https://github.com/NVlabs/tiny-cuda-nn/blob/28ca991f99b44d10387d73077c07ccfdd7f96275/include/tiny-cuda-nn/encodings/grid.h#L652-L665
-     */
-
-    atomicAdd(&grad_features[batch_idx][level][0][idx_val], grad_cur_outs[0] * w);
-    atomicAdd(&grad_features[batch_idx][level][1][idx_val], grad_cur_outs[1] * w);
+    atomicAdd(&grad_features[batch_idx][level][idx_val][0], grad_cur_outs[0] * w);
+    atomicAdd(&grad_features[batch_idx][level][idx_val][1], grad_cur_outs[1] * w);
   }
 }
 
 template <int pos_dim, int val_dim, typename scalar_t>
-__global__ void __launch_bounds__(BLOCK_SIZE_BACK)  // since the block size is known at compile time we can
-                                                    // specify it to the kernel and therefore cuda doesnt need
-                                                    // to use heuristics based on code complexity to minimize
-                                                    // registry usage
+__global__ void __launch_bounds__(BLOCK_SIZE_BACK)
+
     backward_gpu_only_pos(
         const int nr_positions, const int lattice_capacity,
         const torch::PackedTensorAccessor32<scalar_t, 4, torch::RestrictPtrTraits> features,
@@ -367,10 +342,6 @@ __global__ void __launch_bounds__(BLOCK_SIZE_BACK)  // since the block size is k
         torch::PackedTensorAccessor32<scalar_t, 3, torch::RestrictPtrTraits> grad_positions,
         const bool concat_points, const bool require_features_grad, const bool require_positions_grad
     ) {
-  // values_vertices refers to the values that the lattice had in the forward
-  // pass. it has size m_hash_table_capcity x (val_dim+1) grad_outsues is
-  // the gradient of the loss with respect to the sliced out values which has
-  // size nr_positions x val_dim
   const int batch_idx = blockIdx.z;
   const int idx = blockIdx.x * blockDim.x + threadIdx.x;
   if (idx >= nr_positions) {
@@ -386,7 +357,7 @@ __global__ void __launch_bounds__(BLOCK_SIZE_BACK)  // since the block size is k
 
   scalar_t elevated[pos_dim + 1];
   scalar_t sm{};
-#pragma unroll
+
   for (int i = pos_dim; i > 0; i--) {
     scalar_t cf = (pos[i - 1] + random_shift_monolithic[level][i - 1]) * scale_factor[level][i - 1];
     elevated[i] = sm - i * cf;
@@ -397,7 +368,7 @@ __global__ void __launch_bounds__(BLOCK_SIZE_BACK)  // since the block size is k
   int rem0[pos_dim + 1];
   int sum{0};
   scalar_t factor{scalar_t{1.0} / (pos_dim + 1)};
-#pragma unroll
+
   for (int i = 0; i <= pos_dim; ++i) {
     scalar_t v = elevated[i] * factor;
     // find nearest multiples of (pos_dim + 1)
@@ -413,11 +384,11 @@ __global__ void __launch_bounds__(BLOCK_SIZE_BACK)  // since the block size is k
   sum /= pos_dim + 1;
 
   int rank[pos_dim + 1]{};
-#pragma unroll
+
   for (int i = 0; i < pos_dim; ++i) {
     scalar_t di = elevated[i] - rem0[i];
 
-#pragma unroll
+
     for (int j = i + 1; j <= pos_dim; ++j)
       if (di < elevated[j] - rem0[j])
         ++rank[i];
@@ -425,7 +396,7 @@ __global__ void __launch_bounds__(BLOCK_SIZE_BACK)  // since the block size is k
         ++rank[j];
   }
 
-#pragma unroll
+
   for (int i = 0; i <= pos_dim; ++i) {
     rank[i] += sum;
     if (rank[i] < 0) {
@@ -438,7 +409,7 @@ __global__ void __launch_bounds__(BLOCK_SIZE_BACK)  // since the block size is k
   }
 
   scalar_t barycentric[pos_dim + 2]{};
-#pragma unroll
+
   for (int i = 0; i <= pos_dim; ++i) {
     scalar_t delta = (elevated[i] - rem0[i]) * factor;
     for (int j = 0; j <= pos_dim; ++j) {
@@ -455,87 +426,45 @@ __global__ void __launch_bounds__(BLOCK_SIZE_BACK)  // since the block size is k
 
   int key[pos_dim];
 
-  // We have
-  // dL/dS (derivative of the loss wrt to the sliced value),
-  // we want
-  // dL/dP = dL/dS *dS/dB * dB/dE * dE/dP (derivative of loss wrt to sliced
-  // value),
-  // hence we need dS/dB (derivative of the sliced value wrt to the
-  // barycentric coords) dB/dE (derivative of the barycentric wrt to the
-  // elevated coords) dE/dP (derivative of the elevated wrt to the position in
-  // xyz) dL/dB  = dL/dS *dS/dB foward pass is just S=B0*WLvl*V0 + B1*WLvl*V1
-  // etc so dS/dB0 is just W*V0
   scalar_t dL_dbarycentric[pos_dim + 2]{};
   for (int remainder = 0; remainder <= pos_dim; ++remainder) {
-#pragma unroll
-    // Compute the location of the lattice point explicitly (all but
-    // the last coordinate - it's redundant because they sum to zero)
+
     for (int i = 0; i < pos_dim; ++i) {
       key[i] = rem0[i] + remainder;
       if (rank[i] > pos_dim - remainder) key[i] -= (pos_dim + 1);
     }
-    // Retrieve pointer to the value at this vertex.
     int idx_val = idx_hash_with_collision<pos_dim>(key, lattice_capacity);
 
-    // Load the value for this vertex
     const scalar_t* fv = &features[batch_idx][level][idx_val][0];
-    // add to the dL_d_barycentric
     dL_dbarycentric[remainder] += fv[0] * w_lvl * grad_cur_outs[0];
     dL_dbarycentric[remainder] += fv[1] * w_lvl * grad_cur_outs[1];
   }
 
-  // dL/dE  = dL/dB *dB/dE
-  // In the forward pass of computing B from E there is this wraparound line
-  // barycentric[0] += 1.0 + barycentric[pos_dim + 1], hence
-  // barycentric[0] = barycentric[0] + 1.0 + barycentric[pos_dim + 1];
-  // this means that the gradient of barycentric[0] is also added to
-  // barycentric[pos_dim+1]
   dL_dbarycentric[pos_dim + 1] += dL_dbarycentric[0];
 
-  // Now we need to accumulate gradient into elevated from from each
-  // barycentric that the particlar elevated affected
   scalar_t dL_delevated[pos_dim + 1]{};
-#pragma unroll
+
   for (int i = 0; i <= pos_dim; ++i) {
     dL_delevated[i] += dL_dbarycentric[pos_dim - rank[i]] * factor;
     dL_delevated[i] -= dL_dbarycentric[pos_dim + 1 - rank[i]] * factor;
   }
 
-  // dL/dP = dL/dE * dE/dP
   scalar_t dL_dP[pos_dim]{};
 
-  // I unrolled the loop that computes E from P and I got some local
-  // derivatives like dEx/dPx=Sx  dEx/dPy=Sy dEy/dPx=-Sx  dEy/dPy=Sy
-  // dEy/dPz=Sz dEz/dPy=-2Sy  dEz/dPz=Sz dEw/dPz=-3Sz
-  //
-  // So we just accumulate these values into dL_dP
-  // x
-  // dL_dP[0]= dL_delevated[0]* scale_factor[level][0] +
-  //             dL_delevated[1]* (-scale_factor[level][0]);
-  // //y
-  // dL_dP[1]= dL_delevated[0]* scale_factor[level][1] +
-  //             dL_delevated[1]* scale_factor[level][1] +
-  //             dL_delevated[2]* (-2*scale_factor[level][1]);
-  // //z
-  // dL_dP[2]= dL_delevated[0]* scale_factor[level][2] +
-  //             dL_delevated[1]* scale_factor[level][2] +
-  //             dL_delevated[2]* scale_factor[level][2] +
-  //             dL_delevated[3]* (-3*scale_factor[level][2]);
-  // do it in a loop so as to support various pos_dims
   for (int i = 0; i < pos_dim; ++i) {
-#pragma unroll
+
     for (int j = 0; j <= i; ++j) {
       dL_dP[i] += dL_delevated[j] * scale_factor[level][i];
     }
   }
-#pragma unroll
+
   for (int i = 0; i < pos_dim; ++i) {
     dL_dP[i] -= dL_delevated[i + 1] * scale_factor[level][i] * (i + 1);
   }
 
-#pragma unroll
+
   for (int i = 0; i < pos_dim; ++i) {
-    atomicAdd(&grad_positions[batch_idx][i][idx], dL_dP[i]);
+    atomicAdd(&grad_positions[batch_idx][idx][i], dL_dP[i]);
   }
 }
 
@@ -544,6 +473,7 @@ template <int pos_dim, int val_dim, typename scalar_t>
 __global__ void __launch_bounds__(BLOCK_SIZE_DOUBLE_BACK) double_backward_gpu(
     const int nr_positions, const int lattice_capacity, const int nr_resolutions,
     const torch::PackedTensorAccessor32<scalar_t, 3, torch::RestrictPtrTraits> grad_grad_positions,
+    const torch::PackedTensorAccessor32<scalar_t, 4, torch::RestrictPtrTraits> grad_grad_features,
     const torch::PackedTensorAccessor32<scalar_t, 4, torch::RestrictPtrTraits> features,
     const torch::PackedTensorAccessor32<scalar_t, 3, torch::RestrictPtrTraits> positions,
     const torch::PackedTensorAccessor32<scalar_t, 2, torch::RestrictPtrTraits> scale_factor,
@@ -553,16 +483,18 @@ __global__ void __launch_bounds__(BLOCK_SIZE_DOUBLE_BACK) double_backward_gpu(
     const bool concat_points,
     //output
     torch::PackedTensorAccessor32<scalar_t, 4, torch::RestrictPtrTraits> grad_grad_outs,
-    torch::PackedTensorAccessor32<scalar_t, 4, torch::RestrictPtrTraits> grad_features
+    torch::PackedTensorAccessor32<scalar_t, 4, torch::RestrictPtrTraits> grad_features,
+    torch::PackedTensorAccessor32<scalar_t, 3, torch::RestrictPtrTraits> grad_positions
 ) {
   const int batch_idx = blockIdx.z;
   const int idx = blockIdx.x * blockDim.x + threadIdx.x;
-
   if (idx >= nr_positions) {
     return;
   }
 
   const uint32_t level = blockIdx.y;
+
+  // a kernel is responsible for a single level of a single position of a single batch element
 
   if (level >= nr_resolutions) {
     grad_grad_outs[batch_idx][level][0][idx] = 0;
@@ -577,7 +509,7 @@ __global__ void __launch_bounds__(BLOCK_SIZE_DOUBLE_BACK) double_backward_gpu(
 
   scalar_t elevated[pos_dim + 1];
   scalar_t sm = 0;
-#pragma unroll
+
   for (int i = pos_dim; i > 0; i--) {
     scalar_t cf = (pos[i - 1] + random_shift_monolithic[level][i - 1]) * scale_factor[level][i - 1];
     elevated[i] = sm - i * cf;
@@ -587,9 +519,9 @@ __global__ void __launch_bounds__(BLOCK_SIZE_DOUBLE_BACK) double_backward_gpu(
 
   int rem0[pos_dim + 1];
   int rank[pos_dim + 1]{0};
-
+  scalar_t factor{scalar_t{1.0} / (pos_dim + 1)};
   int sum = 0;
-#pragma unroll
+
   for (int i = 0; i <= pos_dim; i++) {
     scalar_t v = elevated[i] * (1.0f / (pos_dim + 1));
     scalar_t up = ceil(v) * (pos_dim + 1);
@@ -603,7 +535,7 @@ __global__ void __launch_bounds__(BLOCK_SIZE_DOUBLE_BACK) double_backward_gpu(
   }
   sum /= pos_dim + 1;
 
-#pragma unroll
+
   for (int i = 0; i < pos_dim; i++) {
     double di = elevated[i] - rem0[i];
     for (int j = i + 1; j <= pos_dim; j++)
@@ -613,7 +545,7 @@ __global__ void __launch_bounds__(BLOCK_SIZE_DOUBLE_BACK) double_backward_gpu(
         rank[j]++;
   }
 
-#pragma unroll
+
   for (int i = 0; i <= pos_dim; i++) {
     rank[i] += sum;
     if (rank[i] < 0) {
@@ -626,7 +558,7 @@ __global__ void __launch_bounds__(BLOCK_SIZE_DOUBLE_BACK) double_backward_gpu(
   }
 
   scalar_t barycentric[pos_dim + 2]{0.0f};
-#pragma unroll
+
   for (int i = 0; i <= pos_dim; i++) {
     scalar_t delta = (elevated[i] - rem0[i]) * (1.0f / (pos_dim + 1));
     barycentric[pos_dim - rank[i]] += delta;
@@ -634,45 +566,51 @@ __global__ void __launch_bounds__(BLOCK_SIZE_DOUBLE_BACK) double_backward_gpu(
   }
   barycentric[0] += 1.0f + barycentric[pos_dim + 1];
 
+  // until here the code is the same as the forward pass
+
   scalar_t w_lvl = anneal_window[level];
 
   scalar_t grad_outs_cur[val_dim];
-#pragma unroll
+
   for (int j = 0; j < val_dim; j++) {
     grad_outs_cur[j] = grad_outs[batch_idx][level][j][idx];
   }
 
-  scalar_t grad_p_cur[pos_dim];
-#pragma unroll
+  scalar_t grad_grad_positions_cur[pos_dim];
+
   for (int j = 0; j < pos_dim; j++) {
-    grad_p_cur[j] = grad_grad_positions[batch_idx][idx][j];
+    grad_grad_positions_cur[j] = grad_grad_positions[batch_idx][idx][j];
   }
 
-  int key[pos_dim];
-
-  scalar_t dL_delevated[pos_dim + 1]{0.0f};
+  // 1
+  scalar_t dl2__ddl1_de[pos_dim + 1]{0.0f};
   for (int i = 0; i < pos_dim; i++) {
-    scalar_t grad = grad_p_cur[i] * scale_factor[level][i];
-#pragma unroll
+    scalar_t grad = grad_grad_positions_cur[i] * scale_factor[level][i];
+
     for (int j = 0; j <= i; j++) {
-      dL_delevated[j] += grad;
+      dl2__ddl1_de[j] += grad;
     }
   }
-#pragma unroll
+
   for (int i = 0; i < pos_dim; i++) {
-    dL_delevated[i + 1] -= grad_p_cur[i] * scale_factor[level][i] * (i + 1);
+    dl2__ddl1_de[i + 1] -= grad_grad_positions_cur[i] * scale_factor[level][i] * (i + 1);
   }
 
-  scalar_t dL_dbarycentric[pos_dim + 2]{0.0f};
-
+  // 2
+  scalar_t dl2__ddl1_db[pos_dim + 2]{0.0f};
   for (int i = 0; i <= pos_dim; i++) {
-    dL_dbarycentric[pos_dim - rank[i]] += dL_delevated[i] * (1.0f / (pos_dim + 1));
-    dL_dbarycentric[pos_dim + 1 - rank[i]] -= dL_delevated[i] * (1.0f / (pos_dim + 1));
+    dl2__ddl1_db[pos_dim - rank[i]] += dl2__ddl1_de[i] * factor;
+    dl2__ddl1_db[pos_dim + 1 - rank[i]] -= dl2__ddl1_de[i] * factor;
   }
-  dL_dbarycentric[0] += dL_dbarycentric[pos_dim + 1];
+  dl2__ddl1_db[0] += dl2__ddl1_db[pos_dim + 1];
+
+  // 3, a
+  int key[pos_dim];
   scalar_t grad_grad_outs_cur[val_dim]{0.0f};
+
+  scalar_t dl2_db[pos_dim + 2]{0.0f};
   for (int remainder = 0; remainder <= pos_dim; remainder++) {
-#pragma unroll
+
     for (int i = 0; i < pos_dim; i++) {
       key[i] = rem0[i] + remainder;
       if (rank[i] > pos_dim - remainder) key[i] -= (pos_dim + 1);
@@ -680,17 +618,44 @@ __global__ void __launch_bounds__(BLOCK_SIZE_DOUBLE_BACK) double_backward_gpu(
     int idx_val = idx_hash_with_collision<pos_dim>(key, lattice_capacity);
 
     const scalar_t* fv = &features[batch_idx][level][idx_val][0];
-
     atomicAdd(
-        &grad_features[batch_idx][level][0][idx_val], dL_dbarycentric[remainder] * w_lvl * grad_outs_cur[0]
+        &grad_features[batch_idx][level][idx_val][0], dl2__ddl1_db[remainder] * w_lvl * grad_outs_cur[0]
     );
     atomicAdd(
-        &grad_features[batch_idx][level][1][idx_val], dL_dbarycentric[remainder] * w_lvl * grad_outs_cur[1]
+        &grad_features[batch_idx][level][idx_val][1], dl2__ddl1_db[remainder] * w_lvl * grad_outs_cur[1]
     );
 
-    grad_grad_outs_cur[0] += dL_dbarycentric[remainder] * w_lvl * fv[0];
-    grad_grad_outs_cur[1] += dL_dbarycentric[remainder] * w_lvl * fv[1];
+    dl2_db[remainder] += w_lvl * (grad_outs_cur[0] * grad_grad_features[batch_idx][level][idx_val][0] +
+                                  grad_outs_cur[1] * grad_grad_features[batch_idx][level][idx_val][1]);
+
+    scalar_t w = barycentric[remainder] * w_lvl;
+
+    grad_grad_outs_cur[0] +=
+        dl2__ddl1_db[remainder] * w_lvl * fv[0] + grad_grad_features[batch_idx][level][idx_val][0] * w;
+    grad_grad_outs_cur[1] +=
+        dl2__ddl1_db[remainder] * w_lvl * fv[1] + grad_grad_features[batch_idx][level][idx_val][1] * w;
   }
   grad_grad_outs[batch_idx][level][0][idx] = grad_grad_outs_cur[0];
   grad_grad_outs[batch_idx][level][1][idx] = grad_grad_outs_cur[1];
+
+  scalar_t dl2_de[pos_dim + 1]{0.0f};
+  dl2_db[pos_dim + 1] += dl2_db[0];
+  for (int i = 0; i <= pos_dim; ++i) {
+    for (int j = 0; j <= pos_dim; ++j) {
+      if (j != rank[i]) continue;
+      dl2_de[i] += factor * dl2_db[pos_dim - j];
+      dl2_de[i] -= factor * dl2_db[pos_dim + 1 - j];
+    }
+  }
+
+  scalar_t dl2_dpos[pos_dim]{0.0f};
+  scalar_t acc = dl2_de[0];
+  for (int i = 1; i <= pos_dim; ++i) {
+    dl2_dpos[i - 1] = (acc - i * dl2_de[i]) * scale_factor[level][i - 1];
+    acc += dl2_de[i];
+  }
+
+  for (int i = 0; i < pos_dim; ++i) {
+    atomicAdd(&grad_positions[batch_idx][idx][i], dl2_dpos[i]);
+  }
 }

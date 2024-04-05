@@ -177,9 +177,7 @@ class PermutoEncodingFuncBack(torch.autograd.Function):
         # print("back grad_outs", grad_outs.shape)
 
         grad_outs = grad_outs.contiguous()
-        grad_features, grad_positions = lattice.backward(
-            input_struct, grad_outs
-        )
+        grad_features, grad_positions = lattice.backward(input_struct, grad_outs)
 
         # remove batch dimension again if it was added
         if added_batch_dim:
@@ -222,9 +220,7 @@ class PermutoEncodingFuncBack(torch.autograd.Function):
         ctx.lattice = lattice
         ctx.require_features_grad = require_features_grad
         ctx.require_positions_grad = require_positions_grad
-        ctx.save_for_backward(
-            positions, anneal_window, features, grad_outs
-        )
+        ctx.save_for_backward(positions, anneal_window, features, grad_outs)
 
     @staticmethod
     def backward(
@@ -296,15 +292,17 @@ class PermutoEncodingFuncBack(torch.autograd.Function):
 
         (
             grad_features,
-            # grad_positions,
+            grad_positions,
             grad_grad_outs,
         ) = lattice.double_backward(
-            input_struct, grad_grad_positions, grad_outs
+            input_struct, grad_grad_positions, grad_grad_features, grad_outs
         )
+
+        grad_features = grad_features.contiguous()
 
         if added_batch_dim:
             grad_features = grad_features[0]
-            grad_positions = None
+            grad_positions = grad_positions[0]
             grad_grad_outs = grad_grad_outs[0]
 
         # One output for each input of PermutoEncodingFuncBack.forward

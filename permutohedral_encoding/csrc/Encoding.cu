@@ -93,7 +93,7 @@ torch::Tensor Encoding<POS_DIM, NR_FEAT_PER_LEVEL>::forward(const EncodingInput&
 
 template <uint32_t POS_DIM, uint32_t NR_FEAT_PER_LEVEL>
 std::tuple<torch::Tensor, torch::Tensor> Encoding<POS_DIM, NR_FEAT_PER_LEVEL>::backward(
-    const EncodingInput& input, torch::Tensor& grad_encoded_positions
+    const EncodingInput& input, torch::Tensor& grad_outs
 ) {
   check_positions(input.m_positions_raw);
   const int batch_size_pos = input.m_positions_raw.size(0);
@@ -101,20 +101,21 @@ std::tuple<torch::Tensor, torch::Tensor> Encoding<POS_DIM, NR_FEAT_PER_LEVEL>::b
   const int pos_dim = input.m_positions_raw.size(2);
 
   const int lattice_capacity = input.m_features.size(2);
-  CHECK(grad_encoded_positions.dim() == 4)
-      << "grad_encoded_positions should be batch_size x nr_resolutions x val_dim x nr_positions, so it "
-         "should have 4 dimensions. However it has "
-      << grad_encoded_positions.dim();
-  CHECK(grad_encoded_positions.is_contiguous())
-      << "Grad sliced values needs to be contiguous. Please call .contiguous() on it";
+  CHECK(
+      grad_outs.dim() == 4
+  ) << "grad_outs should be batch_size x nr_resolutions x val_dim x nr_positions, so it "
+       "should have 4 dimensions. However it has "
+    << grad_outs.dim();
+  CHECK(grad_outs.is_contiguous()
+  ) << "Grad sliced values needs to be contiguous. Please call .contiguous() on it";
 
-  int nr_resolutions = grad_encoded_positions.size(1);
-  const int val_dim = grad_encoded_positions.size(2);
-  CHECK(nr_positions == grad_encoded_positions.size(3))
+  int nr_resolutions = grad_outs.size(1);
+  const int val_dim = grad_outs.size(2);
+  CHECK(nr_positions == grad_outs.size(3))
       << "The nr of positions should match between the input positions and the sliced values";
   CHECK(
       input.m_features.dim() == 4
-  ) << "grad_encoded_positions should be batch_size x nr_resolutions x val_dim x nr_positions, so it "
+  ) << "grad_outs should be batch_size x nr_resolutions x val_dim x nr_positions, so it "
        "should have 3 dimensions. However it has "
     << input.m_features.dim();
   CHECK(input.m_features.is_contiguous())
@@ -133,16 +134,16 @@ std::tuple<torch::Tensor, torch::Tensor> Encoding<POS_DIM, NR_FEAT_PER_LEVEL>::b
 
   Tensor grad_features;  // dL/dLatticeValues
   if (input.m_require_features_grad) {
-    grad_features = torch::zeros({batch_size_pos, nr_resolutions, val_dim, lattice_capacity}, tensor_options);
+    grad_features = torch::zeros({batch_size_pos, nr_resolutions, lattice_capacity, val_dim}, tensor_options);
   } else {
     grad_features = torch::empty({1, 1, 1, 1}, tensor_options);
   }
 
-  Tensor positions_grad;  // dL/dPos
+  Tensor grad_positions;  // dL/dPos
   if (input.m_require_positions_grad) {
-    positions_grad = torch::zeros({batch_size_pos, pos_dim, nr_positions}, tensor_options);
+    grad_positions = torch::zeros({batch_size_pos, nr_positions, pos_dim}, tensor_options);
   } else {
-    positions_grad = torch::empty({1, 1, 1}, tensor_options);
+    grad_positions = torch::empty({1, 1, 1}, tensor_options);
   }
 
   const dim3 blocks = {
@@ -161,7 +162,7 @@ std::tuple<torch::Tensor, torch::Tensor> Encoding<POS_DIM, NR_FEAT_PER_LEVEL>::b
                   m_fixed_params.m_random_shift_per_level
                       .packed_accessor32<scalar_t, 2, torch::RestrictPtrTraits>(),
                   input.m_anneal_window.packed_accessor32<scalar_t, 1, torch::RestrictPtrTraits>(),
-                  grad_encoded_positions.packed_accessor32<scalar_t, 4, torch::RestrictPtrTraits>(),
+                  grad_outs.packed_accessor32<scalar_t, 4, torch::RestrictPtrTraits>(),
                   grad_features.packed_accessor32<scalar_t, 4, torch::RestrictPtrTraits>(),
                   m_fixed_params.m_concat_points
               );
@@ -181,8 +182,8 @@ std::tuple<torch::Tensor, torch::Tensor> Encoding<POS_DIM, NR_FEAT_PER_LEVEL>::b
                   m_fixed_params.m_random_shift_per_level
                       .packed_accessor32<scalar_t, 2, torch::RestrictPtrTraits>(),
                   input.m_anneal_window.packed_accessor32<scalar_t, 1, torch::RestrictPtrTraits>(),
-                  grad_encoded_positions.packed_accessor32<scalar_t, 4, torch::RestrictPtrTraits>(),
-                  positions_grad.packed_accessor32<scalar_t, 3, torch::RestrictPtrTraits>(),
+                  grad_outs.packed_accessor32<scalar_t, 4, torch::RestrictPtrTraits>(),
+                  grad_positions.packed_accessor32<scalar_t, 3, torch::RestrictPtrTraits>(),
                   m_fixed_params.m_concat_points, input.m_require_features_grad,
                   input.m_require_positions_grad
               );
@@ -190,16 +191,13 @@ std::tuple<torch::Tensor, torch::Tensor> Encoding<POS_DIM, NR_FEAT_PER_LEVEL>::b
     );
   }
 
-  grad_features = grad_features.permute({0, 1, 3, 2});
-  positions_grad = positions_grad.permute({0, 2, 1});
-
-  return std::make_tuple(grad_features, positions_grad);
+  return std::make_tuple(grad_features, grad_positions);
 }
 
 template <uint32_t POS_DIM, uint32_t NR_FEAT_PER_LEVEL>
-std::tuple<torch::Tensor, torch::Tensor> Encoding<POS_DIM, NR_FEAT_PER_LEVEL>::double_backward(
+std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> Encoding<POS_DIM, NR_FEAT_PER_LEVEL>::double_backward(
     const EncodingInput& input, const torch::Tensor& grad_grad_positions,
-    torch::Tensor& grad_encoded_positions
+    const torch::Tensor& grad_grad_features, torch::Tensor& grad_outs
 ) {
   check_positions(input.m_positions_raw);
   const int batch_size_pos = input.m_positions_raw.size(0);
@@ -212,19 +210,17 @@ std::tuple<torch::Tensor, torch::Tensor> Encoding<POS_DIM, NR_FEAT_PER_LEVEL>::d
   const int val_dim = input.m_features.size(3);
 
   CHECK(
-      grad_encoded_positions.dim() == 4
-  ) << "grad_encoded_positions should be batch_size x nr_resolutions x val_dim x nr_positions, so it should "
+      grad_outs.dim() == 4
+  ) << "grad_outs should be batch_size x nr_resolutions x val_dim x nr_positions, so it should "
        "have 4 dimensions. However it has "
-    << grad_encoded_positions.dim();
-  CHECK(grad_encoded_positions.is_contiguous())
-      << "Grad sliced values needs to be contiguous. Please call .contiguous() on it";
-  CHECK(nr_positions == grad_encoded_positions.size(3))
+    << grad_outs.dim();
+  CHECK(grad_outs.is_contiguous()
+  ) << "Grad sliced values needs to be contiguous. Please call .contiguous() on it";
+  CHECK(nr_positions == grad_outs.size(3))
       << "The nr of positions should match between the number of encoded positions";
-  CHECK(
-      input.m_features.dim() == 4
-  ) << "grad_encoded_positions should be batch_size x nr_resolutions x val_dim x "
-       "nr_positions, so it should have 4 dimensions. However it has "
-    << input.m_features.dim();
+  CHECK(input.m_features.dim() == 4) << "grad_outs should be batch_size x nr_resolutions x val_dim x "
+                                        "nr_positions, so it should have 4 dimensions. However it has "
+                                     << input.m_features.dim();
   CHECK(input.m_features.is_contiguous())
       << "We assume that the features are contiguous because in the cuda code we make a load of 2 float "
          "values at a time and that assumes that they are contiguous";
@@ -238,23 +234,16 @@ std::tuple<torch::Tensor, torch::Tensor> Encoding<POS_DIM, NR_FEAT_PER_LEVEL>::d
 
   auto tensor_options = torch::dtype(input.m_features.scalar_type()).device(torch::kCUDA, 0);
 
-  Tensor grad_features = torch::zeros(
-      {batch_size_features, nr_resolutions, val_dim, lattice_capacity},
-      tensor_options
-  );
-  Tensor grad_positions = torch::zeros(
-      {batch_size_pos, nr_positions, pos_dim},
-      tensor_options
-  );
-  Tensor grad_grad_encoded_positions = torch::zeros(
-      {batch_size_pos, nr_resolutions + nr_resolutions_extra, val_dim, nr_positions},
-      tensor_options
+  Tensor grad_features =
+      torch::zeros({batch_size_features, nr_resolutions, lattice_capacity, val_dim}, tensor_options);
+  Tensor grad_positions = torch::zeros({batch_size_pos, nr_positions, pos_dim}, tensor_options);
+  Tensor grad_grad_outs = torch::zeros(
+      {batch_size_pos, nr_resolutions + nr_resolutions_extra, val_dim, nr_positions}, tensor_options
   );
 
-  // writes gradient to grad_features, assumes the grad_features is tranposed so we have to transpose back
-  // afterwards
-  dim3 blocks = {
-      (unsigned int)div_round_up(nr_positions, BLOCK_SIZE_DOUBLE_BACK), (unsigned int)nr_resolutions, 1};
+  const dim3 blocks = {
+      (unsigned int)div_round_up(nr_positions, BLOCK_SIZE_DOUBLE_BACK), (unsigned int)nr_resolutions,
+      (unsigned int)batch_size_pos};
 
   AT_DISPATCH_FLOATING_TYPES_AND_HALF(
       input.m_features.scalar_type(), "double_backward_gpu", ([&] {
@@ -262,24 +251,24 @@ std::tuple<torch::Tensor, torch::Tensor> Encoding<POS_DIM, NR_FEAT_PER_LEVEL>::d
             <<<blocks, BLOCK_SIZE_DOUBLE_BACK, 0, at::cuda::getCurrentCUDAStream()>>>(
                 nr_positions, lattice_capacity, nr_resolutions,
                 grad_grad_positions.packed_accessor32<scalar_t, 3, torch::RestrictPtrTraits>(),
+                grad_grad_features.packed_accessor32<scalar_t, 4, torch::RestrictPtrTraits>(),
                 input.m_features.packed_accessor32<scalar_t, 4, torch::RestrictPtrTraits>(),
                 input.m_positions_raw.packed_accessor32<scalar_t, 3, torch::RestrictPtrTraits>(),
                 m_fixed_params.m_scale_factor.packed_accessor32<scalar_t, 2, torch::RestrictPtrTraits>(),
-                m_fixed_params.m_random_shift_per_level.packed_accessor32<scalar_t, 2, torch::RestrictPtrTraits>(
-                ),
+                m_fixed_params.m_random_shift_per_level
+                    .packed_accessor32<scalar_t, 2, torch::RestrictPtrTraits>(),
                 input.m_anneal_window.packed_accessor32<scalar_t, 1, torch::RestrictPtrTraits>(),
-                grad_encoded_positions.packed_accessor32<scalar_t, 4, torch::RestrictPtrTraits>(),
+                grad_outs.packed_accessor32<scalar_t, 4, torch::RestrictPtrTraits>(),
                 m_fixed_params.m_concat_points,
                 // output
-                grad_grad_encoded_positions.packed_accessor32<scalar_t, 4, torch::RestrictPtrTraits>(),
-                grad_features.packed_accessor32<scalar_t, 4, torch::RestrictPtrTraits>()
+                grad_grad_outs.packed_accessor32<scalar_t, 4, torch::RestrictPtrTraits>(),
+                grad_features.packed_accessor32<scalar_t, 4, torch::RestrictPtrTraits>(),
+                grad_positions.packed_accessor32<scalar_t, 3, torch::RestrictPtrTraits>()
             );
       })
   );
 
-  grad_features = grad_features.permute({0, 1, 3, 2});
-
-  return std::make_tuple(grad_features, grad_grad_encoded_positions);
+  return std::make_tuple(grad_features, grad_positions, grad_grad_outs);
 }
 
 // explicit instantiation

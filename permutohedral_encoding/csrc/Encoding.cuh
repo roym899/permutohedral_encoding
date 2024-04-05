@@ -87,8 +87,8 @@ class EncodingBase {
   virtual std::tuple<torch::Tensor, torch::Tensor> backward(
       const EncodingInput& input, torch::Tensor& grad_sliced_values_monolithic
   ) = 0;
-  virtual std::tuple<torch::Tensor, torch::Tensor> double_backward(
-      const EncodingInput& input, const torch::Tensor& double_positions_grad,
+  virtual std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> double_backward(
+      const EncodingInput& input, const torch::Tensor& grad_grad_positions, const torch::Tensor& grad_grad_features,
       torch::Tensor& grad_sliced_values_monolithic
   ) = 0;
 };
@@ -115,8 +115,9 @@ class Encoding : public EncodingBase,
   ) override;
 
   // double backward
-  std::tuple<torch::Tensor, torch::Tensor> double_backward(
-      const EncodingInput& input, const torch::Tensor& double_positions_grad,
+  std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> double_backward(
+      const EncodingInput& input, const torch::Tensor& grad_grad_positions,
+      const torch::Tensor& grad_grad_features,
       torch::Tensor& grad_sliced_values_monolithic
   ) override;
 
@@ -188,11 +189,12 @@ class EncodingWrapper : public std::enable_shared_from_this<EncodingWrapper> {
   ) {
     return m_encoding->backward(input, grad_sliced_values_monolithic);
   }
-  std::tuple<torch::Tensor, torch::Tensor> double_backward(
-      const EncodingInput& input, const torch::Tensor& double_positions_grad,
+  std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> double_backward(
+      const EncodingInput& input, const torch::Tensor& grad_grad_positions,
+      const torch::Tensor& grad_grad_features,
       torch::Tensor& grad_sliced_values_monolithic
   ) {
-    return m_encoding->double_backward(input, double_positions_grad, grad_sliced_values_monolithic);
+    return m_encoding->double_backward(input, grad_grad_positions, grad_grad_features, grad_sliced_values_monolithic);
   }
 
  private:
