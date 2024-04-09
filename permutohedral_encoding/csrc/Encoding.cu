@@ -133,18 +133,10 @@ std::tuple<torch::Tensor, torch::Tensor> Encoding<POS_DIM, NR_FEAT_PER_LEVEL>::b
   auto tensor_options = torch::dtype(input.m_features.scalar_type()).device(torch::kCUDA, 0);
 
   Tensor grad_features;  // dL/dLatticeValues
-  if (input.m_require_features_grad) {
-    grad_features = torch::zeros({batch_size_pos, nr_resolutions, lattice_capacity, val_dim}, tensor_options);
-  } else {
-    grad_features = torch::empty({1, 1, 1, 1}, tensor_options);
-  }
+  grad_features = torch::zeros({batch_size_pos, nr_resolutions, lattice_capacity, val_dim}, tensor_options);
 
   Tensor grad_positions;  // dL/dPos
-  if (input.m_require_positions_grad) {
-    grad_positions = torch::zeros({batch_size_pos, nr_positions, pos_dim}, tensor_options);
-  } else {
-    grad_positions = torch::empty({1, 1, 1}, tensor_options);
-  }
+  grad_positions = torch::zeros({batch_size_pos, nr_positions, pos_dim}, tensor_options);
 
   const dim3 blocks = {
       (unsigned int)div_round_up(nr_positions, BLOCK_SIZE_BACK), (unsigned int)nr_resolutions,
