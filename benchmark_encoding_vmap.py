@@ -89,7 +89,7 @@ if __name__ == "__main__":
     finest_scale = 0.001
     dim_out = 2
     num_rays_per_mlp = 10
-    num_samples_per_ray = 128
+    num_samples_per_ray = 100
     num_trials = 20
     num_mlps = 100
     num_queries = num_mlps * num_samples_per_ray * num_rays_per_mlp

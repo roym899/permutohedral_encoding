@@ -34,12 +34,10 @@ class PermutoEncoding(torch.nn.Module):
         self.dtype = dtype
 
         # create hashmap values
-        lattice_values = (
-            torch.randn(capacity, nr_levels, nr_feat_per_level, dtype=dtype) * init_scale
+        features = (
+            torch.randn(nr_levels, capacity, nr_feat_per_level, dtype=dtype) * init_scale
         )
-        # make it nr_levels x capacity x nr_feat
-        lattice_values = lattice_values.permute(1, 0, 2).contiguous()
-        self.lattice_values = torch.nn.Parameter(lattice_values.cuda())
+        self.features = torch.nn.Parameter(features.cuda())
 
         # each levels of the hashamp can be randomly shifted so that we minimize
         #  collisions
@@ -95,31 +93,31 @@ class PermutoEncoding(torch.nn.Module):
         else:
             anneal_window = anneal_window.cuda()
 
-        require_lattice_values_grad = (
-            self.lattice_values.requires_grad and torch.is_grad_enabled()
+        require_features_grad = (
+            self.features.requires_grad and torch.is_grad_enabled()
         )
         require_positions_grad = positions.requires_grad and torch.is_grad_enabled()
 
-        sliced_values = funcs.PermutoEncodingFunc.apply(
+        outs = funcs.PermutoEncodingFunc.apply(
             self.lattice,
-            self.lattice_values,
+            self.features,
             positions,
             anneal_window,
-            require_lattice_values_grad,
+            require_features_grad,
             require_positions_grad,
         )
 
-        if sliced_values.dim() == 4:
-            batch_size = sliced_values.shape[0]
-            sliced_values = sliced_values.permute(0, 3, 1, 2).reshape(
+        if outs.dim() == 4:
+            batch_size = outs.shape[0]
+            outs = outs.permute(0, 3, 1, 2).reshape(
                 batch_size, len(positions), -1
-            )  # from lvl, val, nr_positions to nr_positions x lvl x val
-        elif sliced_values.dim() == 3:
-            sliced_values = sliced_values.permute(2, 0, 1).reshape(
+            )  # from (batch, lvl, val, nr_positions) to (batch, nr_positions, lvl * val)
+        elif outs.dim() == 3:
+            outs = outs.permute(2, 0, 1).reshape(
                 len(positions), -1
-            )  # from lvl, val, nr_positions to nr_positions x lvl x val
+            )  # from (lvl, val, nr_positions) to (nr_positions, lvl * val)
 
-        return sliced_values
+        return outs
 
     def output_dims(self):
         # if we concat also the points, we add a series of extra resolutions to contain

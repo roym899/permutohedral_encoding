@@ -10,34 +10,33 @@
 // minimum input required for any call to the encoding function. Makes it easies
 // to declare the functions since they will all at least get this as input
 struct EncodingInput {
-  EncodingInput(const torch::Tensor& lattice_values,
-                const torch::Tensor& positions_raw,
-                const torch::Tensor& anneal_window,
-                const bool require_lattice_values_grad,
-                const bool require_positions_grad)
-      : m_lattice_values(lattice_values),
+  EncodingInput(
+      const torch::Tensor& features, const torch::Tensor& positions_raw, const torch::Tensor& anneal_window,
+      const bool require_features_grad, const bool require_positions_grad
+  )
+      : m_features(features),
         m_positions_raw(positions_raw),
         m_anneal_window(anneal_window),
-        m_require_lattice_values_grad(require_lattice_values_grad),
+        m_require_features_grad(require_features_grad),
         m_require_positions_grad(require_positions_grad){
 
         };
-  torch::Tensor m_lattice_values;
+  torch::Tensor m_features;
   torch::Tensor m_positions_raw;
   torch::Tensor m_anneal_window;
-  bool m_require_lattice_values_grad;
+  bool m_require_features_grad;
   bool m_require_positions_grad;
 };
 
-// fixed params that do not change during the lifetime of the lattice
+// Fixed params that do not change during the lifetime of the lattice.
 struct EncodingFixedParams {
-  EncodingFixedParams(const int pos_dim, const int capacity,
-                      const int nr_levels, const int nr_feat_per_level,
-                      const std::vector<float>& sigmas_list,
-                      const torch::Tensor& random_shift_per_level,
-                      const bool concat_points, const float points_scaling)
+  EncodingFixedParams(
+      const int pos_dim, const int cap, const int nr_levels, const int nr_feat_per_level,
+      const std::vector<float>& sigmas_list, const torch::Tensor& random_shift_per_level,
+      const bool concat_points, const float points_scaling
+  )
       : m_pos_dim(pos_dim),
-        m_capacity(capacity),
+        m_capacity(cap),
         m_nr_levels(nr_levels),
         m_nr_feat_per_level(nr_feat_per_level),
         m_sigmas_list(sigmas_list),
@@ -58,22 +57,19 @@ struct EncodingFixedParams {
   torch::Tensor m_random_shift_per_level;
   torch::Tensor m_scale_factor;
 
-  torch::Tensor compute_scale_factor_tensor(
-      const std::vector<float> sigmas_list, const int pos_dim) {
+  torch::Tensor compute_scale_factor_tensor(const std::vector<float> sigmas_list, const int pos_dim) {
     int nr_resolutions = sigmas_list.size();
 
-    torch::Tensor scale_factor_tensor =
-        torch::zeros({nr_resolutions, pos_dim},
-                     torch::dtype(m_random_shift_per_level.scalar_type())
-                         .device(torch::kCUDA, 0));
+    torch::Tensor scale_factor_tensor = torch::zeros(
+        {nr_resolutions, pos_dim},
+        torch::dtype(m_random_shift_per_level.scalar_type()).device(torch::kCUDA, 0)
+    );
 
     float invStdDev = 1.0;
     for (int res_idx = 0; res_idx < nr_resolutions; res_idx++) {
       for (int i = 0; i < pos_dim; i++) {
-        scale_factor_tensor[res_idx][i] =
-            1.0 / (std::sqrt((double)(i + 1) * (i + 2))) * invStdDev;
-        scale_factor_tensor[res_idx][i] =
-            scale_factor_tensor[res_idx][i] / sigmas_list[res_idx];
+        scale_factor_tensor[res_idx][i] = 1.0 / (std::sqrt((double)(i + 1) * (i + 2))) * invStdDev;
+        scale_factor_tensor[res_idx][i] = scale_factor_tensor[res_idx][i] / sigmas_list[res_idx];
       }
     }
 
@@ -89,18 +85,17 @@ class EncodingBase {
  public:
   virtual torch::Tensor forward(const EncodingInput& input) = 0;
   virtual std::tuple<torch::Tensor, torch::Tensor> backward(
-      const EncodingInput& input,
-      torch::Tensor& grad_sliced_values_monolithic) = 0;
-  virtual std::tuple<torch::Tensor, torch::Tensor>
-  double_backward_from_positions(
-      const EncodingInput& input, const torch::Tensor& double_positions_grad,
-      torch::Tensor& grad_sliced_values_monolithic) = 0;
+      const EncodingInput& input, torch::Tensor& grad_sliced_values_monolithic
+  ) = 0;
+  virtual std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> double_backward(
+      const EncodingInput& input, const torch::Tensor& grad_grad_positions, const torch::Tensor& grad_grad_features,
+      torch::Tensor& grad_sliced_values_monolithic
+  ) = 0;
 };
 
 template <uint32_t POS_DIM, uint32_t NR_FEAT_PER_LEVEL>
 class Encoding : public EncodingBase,
-                 public std::enable_shared_from_this<
-                     Encoding<POS_DIM, NR_FEAT_PER_LEVEL>> {
+                 public std::enable_shared_from_this<Encoding<POS_DIM, NR_FEAT_PER_LEVEL>> {
  public:
   template <class... Args>
   static std::shared_ptr<Encoding> create(Args&&... args) {
@@ -116,19 +111,20 @@ class Encoding : public EncodingBase,
 
   // backwards passes
   std::tuple<torch::Tensor, torch::Tensor> backward(
-      const EncodingInput& input,
-      torch::Tensor& grad_sliced_values_monolithic) override;
+      const EncodingInput& input, torch::Tensor& grad_sliced_values_monolithic
+  ) override;
 
   // double backward
-  std::tuple<torch::Tensor, torch::Tensor> double_backward_from_positions(
-      const EncodingInput& input, const torch::Tensor& double_positions_grad,
-      torch::Tensor& grad_sliced_values_monolithic) override;
+  std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> double_backward(
+      const EncodingInput& input, const torch::Tensor& grad_grad_positions,
+      const torch::Tensor& grad_grad_features,
+      torch::Tensor& grad_sliced_values_monolithic
+  ) override;
 
  private:
   void check_positions(const torch::Tensor& positions_raw);
   void check_values(const torch::Tensor& values);
-  void check_positions_and_values(const torch::Tensor& positions_raw,
-                                  const torch::Tensor& values);
+  void check_positions_and_values(const torch::Tensor& positions_raw, const torch::Tensor& values);
 
   EncodingFixedParams m_fixed_params;
 };
@@ -138,8 +134,8 @@ class Encoding : public EncodingBase,
 // templates on pos_dim and call the nr_feat_one
 template <uint32_t POS_DIM>
 inline std::shared_ptr<EncodingBase> create_encoding_template_pos_dim(
-    const int pos_dim, const int nr_feat_per_level,
-    const EncodingFixedParams& fixed_params) {
+    const int pos_dim, const int nr_feat_per_level, const EncodingFixedParams& fixed_params
+) {
   switch (nr_feat_per_level) {
     case (2):
       return std::make_shared<Encoding<POS_DIM, 2>>(fixed_params);
@@ -154,29 +150,23 @@ inline std::shared_ptr<EncodingBase> create_encoding_template_pos_dim(
 // since we need to call template cuda functions we need to create a templated
 // encoding object that has a compile time known pos dim and nr_feat_per_level
 inline std::shared_ptr<EncodingBase> create_encoding(
-    const int pos_dim, const int nr_feat_per_level,
-    const EncodingFixedParams& fixed_params) {
+    const int pos_dim, const int nr_feat_per_level, const EncodingFixedParams& fixed_params
+) {
   switch (pos_dim) {
     // case(2): return create_encoding_template_pos_dim<2>(pos_dim,
     // nr_feat_per_level);
     case (2):
-      return create_encoding_template_pos_dim<2>(pos_dim, nr_feat_per_level,
-                                                 fixed_params);
+      return create_encoding_template_pos_dim<2>(pos_dim, nr_feat_per_level, fixed_params);
     case (3):
-      return create_encoding_template_pos_dim<3>(pos_dim, nr_feat_per_level,
-                                                 fixed_params);
+      return create_encoding_template_pos_dim<3>(pos_dim, nr_feat_per_level, fixed_params);
     case (4):
-      return create_encoding_template_pos_dim<4>(pos_dim, nr_feat_per_level,
-                                                 fixed_params);
+      return create_encoding_template_pos_dim<4>(pos_dim, nr_feat_per_level, fixed_params);
     case (5):
-      return create_encoding_template_pos_dim<5>(pos_dim, nr_feat_per_level,
-                                                 fixed_params);
+      return create_encoding_template_pos_dim<5>(pos_dim, nr_feat_per_level, fixed_params);
     case (6):
-      return create_encoding_template_pos_dim<6>(pos_dim, nr_feat_per_level,
-                                                 fixed_params);
+      return create_encoding_template_pos_dim<6>(pos_dim, nr_feat_per_level, fixed_params);
     case (7):
-      return create_encoding_template_pos_dim<7>(pos_dim, nr_feat_per_level,
-                                                 fixed_params);
+      return create_encoding_template_pos_dim<7>(pos_dim, nr_feat_per_level, fixed_params);
     default:
       throw std::runtime_error{"Encoding: pos_dim must be 2,3,4,5,6 or 7"};
   }
@@ -189,29 +179,26 @@ class EncodingWrapper : public std::enable_shared_from_this<EncodingWrapper> {
  public:
   template <class... Args>
   static std::shared_ptr<EncodingWrapper> create(Args&&... args) {
-    return std::shared_ptr<EncodingWrapper>(
-        new EncodingWrapper(std::forward<Args>(args)...));
+    return std::shared_ptr<EncodingWrapper>(new EncodingWrapper(std::forward<Args>(args)...));
   }
   ~EncodingWrapper(){};
 
-  torch::Tensor forward(const EncodingInput& input) {
-    return m_encoding->forward(input);
-  }
+  torch::Tensor forward(const EncodingInput& input) { return m_encoding->forward(input); }
   std::tuple<torch::Tensor, torch::Tensor> backward(
-      const EncodingInput& input,
-      torch::Tensor& grad_sliced_values_monolithic) {
+      const EncodingInput& input, torch::Tensor& grad_sliced_values_monolithic
+  ) {
     return m_encoding->backward(input, grad_sliced_values_monolithic);
   }
-  std::tuple<torch::Tensor, torch::Tensor> double_backward_from_positions(
-      const EncodingInput& input, const torch::Tensor& double_positions_grad,
-      torch::Tensor& grad_sliced_values_monolithic) {
-    return m_encoding->double_backward_from_positions(
-        input, double_positions_grad, grad_sliced_values_monolithic);
+  std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> double_backward(
+      const EncodingInput& input, const torch::Tensor& grad_grad_positions,
+      const torch::Tensor& grad_grad_features,
+      torch::Tensor& grad_sliced_values_monolithic
+  ) {
+    return m_encoding->double_backward(input, grad_grad_positions, grad_grad_features, grad_sliced_values_monolithic);
   }
 
  private:
-  EncodingWrapper(const int pos_dim, const int nr_feat_per_level,
-                  const EncodingFixedParams& fixed_params) {
+  EncodingWrapper(const int pos_dim, const int nr_feat_per_level, const EncodingFixedParams& fixed_params) {
     m_encoding = create_encoding(pos_dim, nr_feat_per_level, fixed_params);
   }
   std::shared_ptr<EncodingBase> m_encoding;
